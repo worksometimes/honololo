@@ -1,0 +1,50 @@
+# Generic smoke plan. Replace target.url and the item actions for any site.
+schema_version: "1.0"
+id: example-web-smoke
+created_by: user
+goal: Verify that the target opens and exposes its primary user-facing entry point.
+kind: smoke
+channel: browser
+
+target:
+  url: https://example.com
+  allowed_domains:
+    - example.com
+  session: venti-example-com
+  restore: false
+  environment: public-demo
+
+items:
+  - id: homepage-loads
+    goal: A visitor can open the homepage and see the product entry point.
+    setup:
+      - open: https://example.com
+      - wait_for: {load: load}
+    actions: []
+    expect:
+      - contains: Example Domain
+      - visible: {by: {role: heading, name: Example Domain}}
+    evidence:
+      - screenshot
+      - page_text
+      - url
+      - action_ledger
+    risk: low
+
+limits:
+  max_items: 10
+  max_attempts_per_item: 2
+  max_heals_per_item: 1
+  stop_after_consecutive_failures: 2
+  timeout_ms_per_item: 60000
+  max_parallel_agents: 1
+  max_tool_calls: 30
+  max_llm_calls: 4
+
+forbidden:
+  - delete
+  - purchase
+  - publish
+  - send
+  - invite
+  - permission change

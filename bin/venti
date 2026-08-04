@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+  sed -n '1,100p' <<'EOF'
+Venti — generic evidence-first QA helpers
+
+Usage:
+  bin/venti doctor       Check the baseline browser prerequisites and contracts
+  bin/venti paths        Print the canonical skill, role, schema, and artifact paths
+  bin/venti help         Show this help
+
+The QA graph is driven by the Claude Code/Codex skill. This CLI deliberately stays small:
+it does not invent a plan, silently mutate a target, or hide an agent runtime behind a wrapper.
+EOF
+}
+
+doctor() {
+  local failed=0 path
+  printf 'Venti doctor\n\n'
+  for path in \
+    "$ROOT_DIR/.claude/skills/mini-venti/SKILL.md" \
+    "$ROOT_DIR/agents/scout.md" \
+    "$ROOT_DIR/agents/planner.md" \
+    "$ROOT_DIR/schemas/plan.schema.json" \
+    "$ROOT_DIR/schemas/result.schema.json"; do
+    if [ -f "$path" ]; then
+      printf 'ok   %s\n' "${path#$ROOT_DIR/}"
+    else
+      printf 'FAIL %s\n' "${path#$ROOT_DIR/}"
+      failed=1
+    fi
+  done
+
+  if command -v agent-browser >/dev/null 2>&1; then
+    printf 'ok   agent-browser %s\n' "$(agent-browser --version 2>/dev/null || true)"
+  else
+    printf 'WARN agent-browser not installed (run: npm i -g agent-browser && agent-browser install)\n'
+  fi
+
+  if command -v jq >/dev/null 2>&1; then
+    if jq empty "$ROOT_DIR/schemas/plan.schema.json" "$ROOT_DIR/schemas/result.schema.json" >/dev/null; then
+      printf 'ok   jq JSON parser\n'
+    else
+      printf 'FAIL schema JSON parse\n'
+      failed=1
+    fi
+  else
+    printf 'FAIL jq not installed (required for valid JSONL run artifacts)\n'
+    failed=1
+  fi
+
+  if [ "$failed" -eq 0 ]; then
+    printf '\nReady for plan/scout/run through the agent skill.\n'
+  fi
+  return "$failed"
+}
+
+paths() {
+  printf 'skill     %s\n' "$ROOT_DIR/.claude/skills/mini-venti/SKILL.md"
+  printf 'roles     %s\n' "$ROOT_DIR/agents"
+  printf 'claude    %s\n' "$ROOT_DIR/.claude/agents"
+  printf 'plans     %s\n' "$ROOT_DIR/plans"
+  printf 'schemas   %s\n' "$ROOT_DIR/schemas"
+  printf 'contracts %s\n' "$ROOT_DIR/docs/contracts"
+  printf 'runs      %s\n' "$ROOT_DIR/runs"
+}
+
+case "${1:-help}" in
+  doctor) doctor ;;
+  paths) paths ;;
+  help|-h|--help) usage ;;
+  *) printf 'Unknown command: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
+esac

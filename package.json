@@ -1,0 +1,38 @@
+{
+  "name": "mini-venti",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Provider-neutral, evidence-first QA harness for browser agents and web applications.",
+  "keywords": ["qa", "browser-automation", "browser-agents", "playwright", "web-testing", "testing"],
+  "type": "module",
+  "bin": {
+    "venti-run": "bin/venti-run"
+  },
+  "scripts": {
+    "test": "node --test --test-reporter=spec test/*.test.js",
+    "lint": "node --check src/cli.js && node --check src/runner.js && node --check src/providers/*.js",
+    "validate": "node src/cli.js validate plans",
+    "check": "npm run lint && npm test && npm run validate",
+    "doctor": "node src/cli.js doctor"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "yaml": "^2.8.1"
+  },
+  "peerDependencies": {
+    "playwright": ">=1.50.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}

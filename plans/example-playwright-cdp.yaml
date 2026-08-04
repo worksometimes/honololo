@@ -1,0 +1,44 @@
+# Run after an existing CDP-capable browser is started. The plan intentionally uses an env var for
+# the endpoint so a websocket URL never enters versioned files or prompts.
+schema_version: "1.0"
+id: example-playwright-cdp
+created_by: fixture
+goal: Verify that the same generic plan contract runs through Playwright over CDP.
+kind: smoke
+channel: browser
+provider: playwright
+provider_config:
+  cdp_url_env: VENTI_CDP_URL
+
+target:
+  url: https://example.com
+  allowed_domains: [example.com]
+  session: playwright-cdp
+  restore: false
+  environment: public-demo
+
+items:
+  - id: homepage-loads
+    goal: The CDP-connected browser shows the example heading.
+    setup:
+      - open: https://example.com
+      - wait_for: {load: domcontentloaded}
+    actions: []
+    expect:
+      - contains: Example Domain
+      - visible: {by: {role: heading, name: Example Domain}}
+      - url_matches: "example\\.com"
+    evidence: [screenshot, page_text, url, action_ledger, trace]
+    risk: low
+
+limits:
+  max_items: 1
+  max_attempts_per_item: 1
+  max_heals_per_item: 0
+  stop_after_consecutive_failures: 1
+  timeout_ms_per_item: 60000
+  max_parallel_agents: 1
+  max_tool_calls: 30
+  max_llm_calls: 0
+
+forbidden: [delete, purchase, publish, send, invite]

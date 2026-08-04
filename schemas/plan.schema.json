@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mini-venti.local/schemas/plan.schema.json",
+  "title": "Venti QA Plan",
+  "description": "A frozen, bounded, evidence-first plan for browser, API, or hybrid QA.",
+  "type": "object",
+  "required": ["schema_version", "id", "target", "goal", "kind", "channel", "items", "limits", "forbidden"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,80}$"},
+    "revision_of": {"type": "string"},
+    "revision_reason": {"type": "string"},
+    "prompt_revision": {"type": "string"},
+    "created_at": {"type": "string"},
+    "created_by": {"type": "string"},
+    "goal": {"type": "string", "minLength": 10},
+    "kind": {"enum": ["smoke", "regression", "exploratory", "accessibility", "visual", "data", "security_boundary", "agent_behavior"]},
+        "channel": {"enum": ["browser", "api", "hybrid"]},
+        "provider": {"enum": ["agent-browser", "playwright", "browser-use", "browser-use-cli", "jsonl", "stagehand", "browsergym", "mcp", "http", "api", "mock"]},
+        "provider_config": {"type": "object"},
+        "headless": {"type": "boolean"},
+        "target": {
+      "type": "object",
+      "required": ["url", "allowed_domains"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {"type": "string", "format": "uri"},
+        "allowed_domains": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "api_base": {"type": "string", "format": "uri"},
+        "session": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+        "restore": {"type": "boolean", "description": "agent-browser cannot combine restore with allowed_domains; make this explicit."},
+        "environment": {"type": "string"}
+      }
+    },
+    "setup": {"$ref": "#/$defs/actions"},
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/item"}
+    },
+    "limits": {
+      "type": "object",
+      "required": ["max_items", "max_attempts_per_item", "max_heals_per_item", "stop_after_consecutive_failures"],
+      "additionalProperties": false,
+      "properties": {
+        "max_items": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "max_attempts_per_item": {"type": "integer", "minimum": 1, "maximum": 3},
+        "max_heals_per_item": {"type": "integer", "minimum": 0, "maximum": 1},
+        "stop_after_consecutive_failures": {"type": "integer", "minimum": 1, "maximum": 20},
+        "timeout_ms_per_item": {"type": "integer", "minimum": 1000, "maximum": 3600000},
+        "max_parallel_agents": {"type": "integer", "minimum": 1, "maximum": 32},
+        "max_tool_calls": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "max_llm_calls": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "max_spend": {"type": "number", "minimum": 0}
+      }
+    },
+    "forbidden": {"type": "array", "items": {"type": "string"}},
+    "approval_gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "before", "question"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string"},
+          "before": {"type": "string"},
+          "question": {"type": "string"},
+          "risk": {"enum": ["low", "medium", "high", "critical"]}
+        }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {"type": "string"},
+        "required": {"type": "boolean"},
+        "noise_band": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"done": {"type": "array", "items": {"type": "string"}}}
+    }
+  },
+  "$defs": {
+    "locator": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 2,
+      "additionalProperties": false,
+      "properties": {
+        "role": {"type": "string"},
+        "name": {"type": "string"},
+        "text": {"type": "string"},
+        "label": {"type": "string"},
+        "placeholder": {"type": "string"},
+        "test_id": {"type": "string"},
+        "css": {"type": "string"},
+        "xpath": {"type": "string"}
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["by"],
+      "additionalProperties": false,
+      "properties": {"by": {"$ref": "#/$defs/locator"}, "nth": {"type": "integer", "minimum": 0}}
+    },
+    "action": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "open": {"type": "string"},
+        "reload": {"const": true},
+        "click": {"$ref": "#/$defs/target"},
+        "fill": {"type": "object", "required": ["by", "text"], "additionalProperties": false, "properties": {"by": {"$ref": "#/$defs/locator"}, "text": {"type": "string"}}},
+        "type": {"type": "object", "required": ["by", "text"], "additionalProperties": false, "properties": {"by": {"$ref": "#/$defs/locator"}, "text": {"type": "string"}}},
+        "press": {"type": "object", "required": ["key"], "additionalProperties": false, "properties": {"by": {"$ref": "#/$defs/locator"}, "key": {"type": "string"}}},
+        "select": {"type": "object", "required": ["by", "value"], "additionalProperties": false, "properties": {"by": {"$ref": "#/$defs/locator"}, "value": {"type": "string"}}},
+        "upload": {"type": "object", "required": ["by", "path"], "additionalProperties": false, "properties": {"by": {"$ref": "#/$defs/locator"}, "path": {"type": "string"}}},
+        "scroll": {"type": "object", "additionalProperties": false, "properties": {"by": {"$ref": "#/$defs/locator"}, "direction": {"enum": ["up", "down", "left", "right"]}, "amount": {"type": "integer"}}},
+        "wait_for": {"type": "object", "minProperties": 1, "additionalProperties": false, "properties": {"text": {"type": "string"}, "url_matches": {"type": "string"}, "visible": {"$ref": "#/$defs/target"}, "load": {"enum": ["domcontentloaded", "load", "networkidle"]}, "timeout_ms": {"type": "integer", "minimum": 100, "maximum": 3600000}}},
+        "api_request": {
+          "type": "object",
+          "required": ["method", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "method": {"enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+            "path": {"type": "string", "pattern": "^/"},
+            "body_file": {"type": "string"},
+            "body": {"type": "object"},
+            "auth_env": {"type": "string", "description": "Name of an environment variable; never put the secret itself in a plan."},
+            "idempotency_key": {"type": "string"},
+            "approval_gate": {"type": "string"}
+          }
+        },
+        "screenshot": {"type": "object", "additionalProperties": false, "properties": {"name": {"type": "string"}}}
+      }
+    },
+    "actions": {"type": "array", "items": {"$ref": "#/$defs/action"}},
+    "expectation": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "contains": {"type": "string"},
+        "not_contains": {"type": "string"},
+        "visible": {"$ref": "#/$defs/target"},
+        "not_visible": {"$ref": "#/$defs/target"},
+        "url_matches": {"type": "string"},
+        "status_equals": {"type": "integer", "minimum": 100, "maximum": 599},
+        "json_path_exists": {"type": "string"},
+        "json_path_equals": {"type": "object", "required": ["path", "value"], "additionalProperties": false, "properties": {"path": {"type": "string"}, "value": {}}},
+        "json_contains": {"type": "string"},
+        "count_at_least": {
+          "type": "object",
+          "required": ["target", "count"],
+          "additionalProperties": false,
+          "properties": {
+            "target": {"$ref": "#/$defs/target"},
+            "count": {"type": "integer", "minimum": 0}
+          }
+        },
+        "value_equals": {
+          "type": "object",
+          "required": ["target", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "target": {"$ref": "#/$defs/target"},
+            "value": {"type": "string"}
+          }
+        },
+        "rubric": {
+          "type": "object",
+          "required": ["dimensions", "unknown_if"],
+          "additionalProperties": false,
+          "properties": {
+            "dimensions": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["id", "criterion", "anchors"],
+                "additionalProperties": false,
+                "properties": {
+                  "id": {"type": "string"},
+                  "criterion": {"type": "string"},
+                  "anchors": {"type": "array", "minItems": 2, "items": {"type": "string"}}
+                }
+              }
+            },
+            "unknown_if": {"type": "string"},
+            "reference": {"type": "string"}
+          }
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "required": ["id", "goal", "actions", "expect", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,80}$"},
+        "goal": {"type": "string"},
+        "channel": {"enum": ["browser", "api", "hybrid"]},
+        "depends_on": {"type": "array", "items": {"type": "string"}},
+        "setup": {"$ref": "#/$defs/actions"},
+        "actions": {"$ref": "#/$defs/actions"},
+        "expect": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/expectation"}},
+        "evidence": {"type": "array", "minItems": 1, "items": {"enum": ["screenshot", "page_text", "url", "action_ledger", "trace", "console", "network", "api_response"]}},
+        "risk": {"enum": ["low", "medium", "high", "critical"]},
+        "note": {"type": "string"}
+      }
+    }
+  }
+}

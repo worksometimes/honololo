@@ -1,0 +1,39 @@
+schema_version: "1.0"
+id: example-api-smoke
+created_by: fixture
+goal: Verify that the generic API channel records a safe GET response and checks its contract.
+kind: data
+channel: api
+provider: http
+
+target:
+  url: https://example.com
+  api_base: https://example.com
+  allowed_domains: [example.com]
+  environment: public-demo
+
+items:
+  - id: homepage-response
+    goal: The public endpoint returns a successful HTML response.
+    setup: []
+    actions:
+      - api_request:
+          method: GET
+          path: /
+    expect:
+      - status_equals: 200
+      - json_contains: Example Domain
+    evidence: [api_response, action_ledger]
+    risk: low
+
+limits:
+  max_items: 1
+  max_attempts_per_item: 1
+  max_heals_per_item: 0
+  stop_after_consecutive_failures: 1
+  timeout_ms_per_item: 30000
+  max_parallel_agents: 1
+  max_tool_calls: 10
+  max_llm_calls: 0
+
+forbidden: [POST, PUT, PATCH, DELETE, purchase, publish, send]

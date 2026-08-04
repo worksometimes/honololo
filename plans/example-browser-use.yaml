@@ -1,0 +1,46 @@
+# Current Browser Use (browser-use harness) smoke test over an existing CDP browser.
+# Set VENTI_CDP_WS or replace cdp_ws_env with a provider-managed endpoint reference.
+schema_version: "1.0"
+id: example-browser-use
+created_by: fixture
+goal: Verify that the generic plan contract runs through the current Browser Use harness.
+kind: smoke
+channel: browser
+provider: browser-use
+provider_config:
+  command: uvx
+  args: [browser-use]
+  cdp_ws_env: VENTI_CDP_WS
+
+target:
+  url: https://example.com
+  allowed_domains: [example.com]
+  session: browser-use-cdp
+  restore: false
+  environment: public-demo
+
+items:
+  - id: homepage-loads
+    goal: The Browser Use connected browser shows the example heading.
+    setup:
+      - open: https://example.com
+      - wait_for: {load: load}
+    actions: []
+    expect:
+      - contains: Example Domain
+      - visible: {by: {role: heading, name: Example Domain}}
+      - url_matches: "example\\.com"
+    evidence: [screenshot, page_text, url, action_ledger]
+    risk: low
+
+limits:
+  max_items: 1
+  max_attempts_per_item: 1
+  max_heals_per_item: 0
+  stop_after_consecutive_failures: 1
+  timeout_ms_per_item: 180000
+  max_parallel_agents: 1
+  max_tool_calls: 30
+  max_llm_calls: 0
+
+forbidden: [delete, purchase, publish, send, invite]

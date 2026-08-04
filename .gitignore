@@ -1,0 +1,14 @@
+runs/
+.env
+.env.*
+!.env.example
+node_modules/
+coverage/
+.nyc_output/
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+*.log
+.venti/
+.local-targets/

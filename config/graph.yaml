@@ -1,0 +1,111 @@
+# Machine-readable default graph. The skill is the normative execution contract; this file makes
+# the topology and bounded loops easy for other runtimes to inspect or compile.
+schema_version: "1.0"
+name: venti-default-qa
+entry: intake
+terminal: [complete, blocked, failed]
+
+nodes:
+  - id: intake
+    kind: deterministic
+    next: [load_context]
+  - id: load_context
+    kind: deterministic
+    next: [auth_check]
+  - id: auth_check
+    kind: gate
+    next: [scout, human_login]
+  - id: human_login
+    kind: interrupt
+    next: [scout, blocked]
+  - id: scout
+    kind: orchestrator_workers
+    parallelism: 4
+    next: [plan]
+  - id: plan
+    kind: planner
+    next: [approval]
+  - id: approval
+    kind: interrupt
+    next: [freeze_plan, plan]
+  - id: freeze_plan
+    kind: deterministic
+    next: [item_setup]
+  - id: item_setup
+    kind: deterministic
+    next: [item_act]
+  - id: item_act
+    kind: runner
+    next: [item_observe]
+  - id: item_observe
+    kind: deterministic
+    next: [verify]
+  - id: verify
+    kind: verifier
+    next: [item_complete, classify]
+  - id: classify
+    kind: classifier
+    next: [retry, heal, preserve_failure, human_review, blocked]
+  - id: retry
+    kind: bounded_loop
+    max_iterations_from: limits.max_attempts_per_item
+    next: [item_setup, preserve_failure]
+  - id: heal
+    kind: bounded_loop
+    max_iterations_from: limits.max_heals_per_item
+    next: [item_act, audit]
+  - id: preserve_failure
+    kind: deterministic
+    next: [audit]
+  - id: human_review
+    kind: interrupt
+    next: [audit, blocked]
+  - id: audit
+    kind: auditor
+    next: [item_complete]
+  - id: item_complete
+    kind: router
+    next: [item_setup, regression_compare]
+    condition: more_items
+  - id: regression_compare
+    kind: deterministic
+    next: [report]
+  - id: report
+    kind: reporter
+    next: [learn]
+  - id: learn
+    kind: curator
+    next: [complete]
+
+# Wave scheduling for native_subagents runs. A wave starts only when its dependency artifacts
+# exist; fan-out inside a wave is bounded by limits.max_parallel_agents. Verifiers are pipelined:
+# each starts as soon as its own runner item finishes, without waiting for the whole wave.
+waves:
+  - id: A
+    roles: [scout]
+    parallel: true
+  - id: B
+    roles: [planner]
+    after: [A]
+  - id: C
+    roles: [runner]
+    after: [B]
+    parallel: independent_items_only
+  - id: D
+    roles: [verifier]
+    after_each: runner_item
+  - id: E
+    roles: [healer, auditor]
+    trigger: classified_failure_or_audit_sample
+  - id: F
+    roles: [reporter, curator]
+    after: [C, D, E]
+
+invariants:
+  - no_plan_mutation_after_freeze
+  - no_risky_action_without_approval
+  - no_pass_without_evidence
+  - healed_items_require_audit
+  - retries_are_new_attempt_directories
+  - events_are_append_only
+  - rubric_pending_is_not_a_failure_signal

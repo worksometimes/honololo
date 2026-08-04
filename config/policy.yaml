@@ -1,0 +1,56 @@
+schema_version: "1.0"
+name: venti-safe-defaults
+
+execution:
+  default_channel: browser
+  default_max_attempts_per_item: 2
+  default_max_heals_per_item: 1
+  default_stop_after_consecutive_failures: 3
+  default_timeout_ms_per_item: 120000
+  default_max_parallel_agents: 4
+  default_max_tool_calls: 80
+  default_max_llm_calls: 8
+  retry_only_classes: [locator, timing, environment]
+  non_retryable_classes: [product, safety, ambiguous]
+
+locator_priority:
+  - role_name
+  - label
+  - placeholder
+  - visible_text
+  - test_id
+  - css
+  - xpath
+
+forbidden_by_default:
+  - delete
+  - purchase
+  - publish
+  - send
+  - invite
+  - change_permissions
+  - change_billing
+  - mutate_production_data
+
+secrets:
+  allowed_in_plan: false
+  allowed_in_prompt: false
+  allowed_in_artifact: false
+  env_reference_only: true
+
+result_policy:
+  pass_requires: [all_expectations_true, evidence_present]
+  pass_needs_review_if: [healed, audit_pending]
+  needs_human_if: [missing_evidence, ambiguous_target, safety_boundary, rubric_unknown]
+  rubric_pending_counts_as_failure: false
+
+evidence_policy:
+  screenshot_when: [requested_in_item_evidence, item_did_not_pass]
+  per_action_observation: url_only
+
+naming:
+  target_key: lowercase hostname of target.url, minus a leading "www."
+  run_id: "<YYYYMMDD_HHMMSS>_<plan-id>"
+  session: "venti-<target-key with dots as dashes>"
+  worker_artifacts: "runs/<run-id>/agents/<task-id>/"
+  item_evidence: "runs/<run-id>/evidence/<item-id>/attempt-<n>/"
