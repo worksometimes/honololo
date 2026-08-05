@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honololo.local/contracts/review.schema.json",
+  "title": "HONOLOLO review",
+  "type": "object",
+  "required": ["schema_version", "run_id", "attempt", "source", "outcome", "criteria"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "1"},
+    "run_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+    "attempt": {"type": "integer", "minimum": 1},
+    "source": {"enum": ["deterministic", "fresh_evaluator"]},
+    "outcome": {"enum": ["pass", "fail", "needs_human", "blocked", "interrupted"]},
+    "criteria": {"type": "array", "items": {"$ref": "#/$defs/criterion"}}
+  },
+  "$defs": {
+    "criterion": {
+      "type": "object",
+      "required": ["id", "verdict", "reason", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+        "verdict": {"enum": ["pass", "fail", "needs_human"]},
+        "reason": {"type": "string", "minLength": 1},
+        "evidence": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": "1",
+  "run_id": "valid-run",
+  "attempt": 1,
+  "plan_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "steps": [
+    {
+      "id": "home",
+      "files": [
+        {
+          "kind": "url",
+          "path": "attempts/001/evidence/home/url.txt",
+          "bytes": 1,
+          "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "captured_at": "2026-08-05T04:05:06Z"
+        },
+        {
+          "kind": "snapshot",
+          "path": "attempts/001/evidence/home/snapshot.md",
+          "bytes": 1,
+          "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "captured_at": "2026-08-05T04:05:06Z"
+        }
+      ]
+    }
+  ]
+}

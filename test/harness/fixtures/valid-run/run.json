@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "id": "valid-run",
+  "type": "qa",
+  "target": {
+    "url": "https://app.example.com/",
+    "allowed_domains": ["app.example.com"]
+  },
+  "goal": "Verify the home page.",
+  "deliverables": ["output/result.md"],
+  "completion": ["Every home-page criterion has verified evidence."],
+  "forbidden": ["delete", "purchase", "publish", "send", "change_permissions"],
+  "limits": {"max_actions": 10}
+}

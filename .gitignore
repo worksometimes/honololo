@@ -1,0 +1,19 @@
+node_modules/
+coverage/
+.nyc_output/
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+*.log
+.env
+.env.*
+!.env.example
+
+# HONOLOLO runtime workspace: target identity, plans, evidence, reviews, and outputs.
+.honololo/
+
+# Legacy local data is preserved but never read or written by HONOLOLO.
+.yolo/
+runs/
+.local-targets/

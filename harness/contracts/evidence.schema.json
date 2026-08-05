@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honololo.local/contracts/evidence.schema.json",
+  "title": "HONOLOLO attempt evidence",
+  "type": "object",
+  "required": ["schema_version", "run_id", "attempt", "plan_sha256", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "1"},
+    "run_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+    "attempt": {"type": "integer", "minimum": 1},
+    "plan_sha256": {"$ref": "#/$defs/sha256"},
+    "steps": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/step"}}
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "required": ["id", "files"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+        "files": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/file"}}
+      }
+    },
+    "file": {
+      "type": "object",
+      "required": ["kind", "path", "bytes", "sha256", "captured_at"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["url", "snapshot", "screenshot", "actions"]},
+        "path": {"type": "string", "minLength": 1},
+        "bytes": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "captured_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "sha256": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+  }
+}

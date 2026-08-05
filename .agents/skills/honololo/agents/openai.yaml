@@ -1,0 +1,7 @@
+interface:
+  display_name: "HONOLOLO"
+  short_description: "Evidence-first browser QA and screenshot manuals"
+  brand_color: "#6C5CE7"
+  default_prompt: "Use $honololo to QA a real website and produce verified portable output."
+policy:
+  allow_implicit_invocation: true

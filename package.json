@@ -1,0 +1,19 @@
+{
+  "name": "honololo",
+  "version": "0.1.0",
+  "description": "Skill-first evidence harness for Claude Code and Codex browser work.",
+  "type": "module",
+  "scripts": {
+    "lint": "node --check harness/lib/*.mjs harness/scripts/*.mjs test/harness/*.js test/harness/*.mjs",
+    "test": "node --test --test-reporter=spec test/harness/*.test.js",
+    "check": "npm run lint && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
+  },
+  "license": "MIT"
+}

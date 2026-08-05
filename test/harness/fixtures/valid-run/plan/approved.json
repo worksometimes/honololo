@@ -1,0 +1,23 @@
+{
+  "schema_version": "1",
+  "run_id": "valid-run",
+  "revision": 1,
+  "approved": {
+    "by": "user",
+    "at": "2026-08-05T04:05:06Z",
+    "proposal_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "steps": [
+    {
+      "id": "home",
+      "goal": "Observe the settled home page.",
+      "risk": "low",
+      "evidence": ["url", "snapshot"],
+      "done_when": [
+        {"id": "home-url", "type": "url_matches", "value": "https://app.example.com/"},
+        {"id": "home-ready", "type": "snapshot_contains", "value": "Ready"}
+      ]
+    }
+  ],
+  "review": {"fresh_evaluator": false, "criteria": []}
+}
