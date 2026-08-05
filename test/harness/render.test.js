@@ -91,7 +91,6 @@ test('renders a portable five-part manual from verified screenshot bytes', async
   const asset = await readFile(join(runDir, 'output/assets/001-settings.png'));
 
   assert.match(markdown, /### 1\. Open settings/u);
-  assert.match(markdown, /Title: Open settings/u);
   assert.match(markdown, /Action:/u);
   assert.match(markdown, /Expected:/u);
   assert.match(markdown, /Image: !\[Open settings\]\(assets\/001-settings\.png\)/u);
@@ -214,16 +213,15 @@ test('preflights conflicting document and asset bytes before writing anything', 
   });
 });
 
-test('a new retry cannot overwrite immutable prior output', async () => {
+test('a retry publishes beside immutable prior output instead of dead-ending', async () => {
   const runDir = await reviewedQaFixture();
   const output = await renderRun({ runDir, attempt: 1, type: 'qa' });
   const original = await readFile(output);
   await addReviewedRetry(runDir, { outcome: 'fail' });
 
-  await assert.rejects(
-    () => renderRun({ runDir, attempt: 2, type: 'qa' }),
-    /OUTPUT_CONFLICT/u,
-  );
+  const retry = await renderRun({ runDir, attempt: 2, type: 'qa' });
+  assert.equal(retry, join(runDir, 'output/attempt-002/result.md'));
+  assert.match(await readFile(retry, 'utf8'), /Overall: fail/u);
   assert.deepEqual(await readFile(output), original);
 });
 
@@ -242,5 +240,39 @@ test('escapes structured Markdown text and omits evaluator reasons', async () =>
   const output = await renderRun({ runDir, attempt: 1, type: 'qa' });
   const markdown = await readFile(output, 'utf8');
   assert.doesNotMatch(markdown, /\r|DO-NOT-RENDER|\[unsafe\]\(\.\.\/run\.json\)/u);
-  assert.equal(markdown.includes('Goal: Goal \\# injected \\[link\\]\\(https://other.example\\)'), true);
+  assert.equal(markdown.includes('Goal: Goal # injected \\[link\\](https://other.example)'), true);
+  // Escaped brackets keep page-derived text from forming a live link, so parentheses stay readable.
+  assert.doesNotMatch(markdown, /[^\\]\]\(/u);
+});
+
+test('prefers a run-local template so a deliverable sets its own language', async () => {
+  const runDir = await reviewedManualFixture();
+  await mkdir(join(runDir, 'templates'), { recursive: true });
+  await writeFile(
+    join(runDir, 'templates/manual.md'),
+    '# 사용자 매뉴얼 — {{run_id}}\n\n## 검토 상태\n\n{{review_status}}\n\n{{steps}}\n',
+  );
+  await writeFile(
+    join(runDir, 'templates/manual.step.md'),
+    '### {{index}}단계. {{title}}\n\n동작: {{instruction}}\n결과: {{expected}}\n화면: {{image}}\n',
+  );
+
+  const markdown = await readFile(await renderRun({ runDir, attempt: 1, type: 'manual' }), 'utf8');
+  assert.match(markdown, /^# 사용자 매뉴얼 — valid-run/u);
+  assert.match(markdown, /### 1단계\. Open settings/u);
+  assert.match(markdown, /동작: Choose Settings from the account menu\./u);
+  assert.match(markdown, /화면: !\[Open settings\]\(assets\/001-settings\.png\)/u);
+  assert.doesNotMatch(markdown, /Screenshot manual|Action:|Caution:/u);
+});
+
+test('renders parenthesised non-English prose without escape noise', async () => {
+  const runDir = await reviewedQaFixture();
+  const runPath = join(runDir, 'run.json');
+  const run = JSON.parse(await readFile(runPath, 'utf8'));
+  run.goal = '연결 상태 3종(연결됨/다시 연결 필요/미연결)을 문서화한다';
+  await writeFile(runPath, `${JSON.stringify(run)}\n`);
+
+  const markdown = await readFile(await renderRun({ runDir, attempt: 1, type: 'qa' }), 'utf8');
+  assert.match(markdown, /Goal: 연결 상태 3종\(연결됨\/다시 연결 필요\/미연결\)을 문서화한다/u);
+  assert.doesNotMatch(markdown, /\\\(|\\\)/u);
 });

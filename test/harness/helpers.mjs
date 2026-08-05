@@ -55,6 +55,15 @@ async function refreshFixture(runDir, attempt = 1) {
   await writeFile(join(runDir, `attempts/${attemptName}/status.json`), json(status));
 }
 
+// A run with captured evidence but no manifest and no status: the state `seal` is meant to consume.
+export async function sealableFixture() {
+  const parent = await mkdtemp(join(tmpdir(), 'honololo-sealable-'));
+  const runDir = join(parent, 'run');
+  await cp(fixtureRoot, runDir, { recursive: true });
+  await rm(join(runDir, 'attempts/001/evidence.json'));
+  return runDir;
+}
+
 export async function validRunFixture() {
   const parent = await mkdtemp(join(tmpdir(), 'honololo-valid-run-'));
   const runDir = join(parent, 'run');
@@ -87,6 +96,100 @@ export async function treeDigest(runDir) {
     hash.update('\0');
   }
   return hash.digest('hex');
+}
+
+// Rebuilds the manifest digests while leaving the recorded verdicts untouched, so a status claim can
+// be tested against evidence that no longer supports it.
+export async function refreshEvidenceOnly(runDir) {
+  const path = join(runDir, 'attempts/001/evidence.json');
+  const manifest = await readJson(path);
+  for (const step of manifest.steps) {
+    for (const file of step.files) {
+      const bytes = await readFile(join(runDir, file.path));
+      file.bytes = bytes.length;
+      file.sha256 = digest(bytes);
+    }
+  }
+  await writeFile(path, json(manifest));
+}
+
+// Two steps declaring only url and snapshot, with one step's captures copied into the other: a
+// copied snapshot is easier to fake than a copied snapshot-and-screenshot pair.
+export async function fixtureWithCopiedSnapshotOnlyStep() {
+  const runDir = await validRunFixture();
+  const planPath = join(runDir, 'plan/approved.json');
+  const plan = await readJson(planPath);
+  plan.steps.push({
+    id: 'copy', goal: 'Observe the same state again.', risk: 'low', evidence: ['url', 'snapshot'],
+    done_when: [{ id: 'copy-ready', type: 'snapshot_contains', value: 'Ready' }],
+  });
+  await writeFile(planPath, json(plan));
+
+  await mkdir(join(runDir, 'attempts/001/evidence/copy'), { recursive: true });
+  for (const name of ['url.txt', 'snapshot.md']) {
+    await cp(
+      join(runDir, `attempts/001/evidence/home/${name}`),
+      join(runDir, `attempts/001/evidence/copy/${name}`),
+    );
+  }
+
+  const manifestPath = join(runDir, 'attempts/001/evidence.json');
+  const manifest = await readJson(manifestPath);
+  manifest.steps.push({
+    id: 'copy',
+    files: manifest.steps[0].files.map((file) => ({
+      ...file, path: file.path.replace('/home/', '/copy/'),
+    })),
+  });
+  await writeFile(manifestPath, json(manifest));
+  await refreshFixture(runDir);
+  return runDir;
+}
+
+// Two steps sharing one snapshot but holding distinct screenshots. Scrolling a page changes its
+// pixels without changing its text, so this shape is ordinary and must not be reported.
+export async function fixtureWithSharedSnapshotDistinctScreenshots() {
+  const runDir = await fixtureWithDuplicatedCapture();
+  const second = join(runDir, 'attempts/001/evidence/copy/screen.png');
+  await writeFile(second, Buffer.concat([PNG, Buffer.from('scrolled')]));
+  await refreshFixture(runDir);
+  return runDir;
+}
+
+export async function fixtureWithDuplicatedCapture() {
+  const runDir = await validRunFixture();
+  const planPath = join(runDir, 'plan/approved.json');
+  const plan = await readJson(planPath);
+  plan.steps[0].evidence.push('screenshot');
+  plan.steps.push({
+    id: 'copy', goal: 'Observe the same state again.', risk: 'low',
+    evidence: ['snapshot', 'screenshot'],
+    done_when: [{ id: 'copy-ready', type: 'snapshot_contains', value: 'Ready' }],
+  });
+  await writeFile(planPath, json(plan));
+
+  const snapshot = await readFile(join(runDir, 'attempts/001/evidence/home/snapshot.md'));
+  await mkdir(join(runDir, 'attempts/001/evidence/copy'), { recursive: true });
+  await writeFile(join(runDir, 'attempts/001/evidence/home/screen.png'), PNG);
+  await writeFile(join(runDir, 'attempts/001/evidence/copy/snapshot.md'), snapshot);
+  await writeFile(join(runDir, 'attempts/001/evidence/copy/screen.png'), PNG);
+
+  const manifestPath = join(runDir, 'attempts/001/evidence.json');
+  const manifest = await readJson(manifestPath);
+  const entry = (kind, path) => ({
+    kind, path, bytes: 1, sha256: `sha256:${'0'.repeat(64)}`, captured_at: '2026-08-05T04:05:06Z',
+  });
+  manifest.steps[0].files.push(entry('screenshot', 'attempts/001/evidence/home/screen.png'));
+  manifest.steps.push({
+    id: 'copy',
+    files: [
+      entry('snapshot', 'attempts/001/evidence/copy/snapshot.md'),
+      entry('screenshot', 'attempts/001/evidence/copy/screen.png'),
+    ],
+  });
+  await writeFile(manifestPath, json(manifest));
+  await refreshFixture(runDir);
+  return runDir;
 }
 
 export async function tamperHash(runDir) {
@@ -309,7 +412,6 @@ export async function reviewedQaFixture({ outcome = 'pass', freshEvidence = 'hom
   const runDir = await validRunFixture();
   const planPath = join(runDir, 'plan/approved.json');
   const plan = await readJson(planPath);
-  plan.steps[0].done_when[1].value = 'Expected heading';
   plan.steps[0].done_when.push({
     id: 'home-clarity', type: 'rubric', criterion: 'The home page purpose is clear.',
   });
@@ -332,6 +434,12 @@ export async function reviewedQaFixture({ outcome = 'pass', freshEvidence = 'hom
     deterministic: [
       { id: 'home-url', verdict: 'pass', reason: 'URL matches the approved target.', evidence: [url] },
       { id: 'home-ready', verdict: criterionOutcome, reason: 'Expected heading was evaluated.', evidence: [snapshot] },
+      ...(freshEvidence === 'wrong_step'
+        ? [{
+          id: 'settings-url', verdict: 'pass', reason: 'The settings route was captured.',
+          evidence: ['attempts/001/evidence/settings/url.txt'],
+        }]
+        : []),
     ],
     fresh: [{
       id: 'home-clarity', verdict: criterionOutcome, reason: 'The page purpose was independently reviewed.',
@@ -419,7 +527,7 @@ export async function reviewedManualFixtureWithPartialStep() {
   plan.steps.push({
     id: 'profile', goal: 'Open the profile screen.', risk: 'low',
     evidence: ['screenshot'],
-    done_when: [{ id: 'profile-ready', type: 'image_exists', value: 'profile screen' }],
+    done_when: [{ id: 'profile-ready', type: 'image_exists', value: 'screen.png' }],
     manual: {
       title: 'Open profile', instruction: 'Choose Profile from the account menu.',
       expected: 'The Profile heading is visible.', cautions: [],

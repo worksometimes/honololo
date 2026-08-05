@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile, readdir } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateContract, validateReviewForPlan } from '../lib/contracts.mjs';
+import { evaluateAttempt, pairedScreenshotDigest, weakerThanEvidence } from '../lib/criteria.mjs';
 import { jobRelative } from '../lib/files.mjs';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
@@ -131,6 +132,7 @@ async function verifyEvidence(runDir, attempt, plan, planSha256, indexed) {
 
   const seenSteps = new Set();
   const verified = [];
+  const stepsById = new Map();
   for (const claimedStep of manifest.steps) {
     const approvedStep = indexed.steps.get(claimedStep.id);
     if (!approvedStep || seenSteps.has(claimedStep.id)) {
@@ -141,6 +143,7 @@ async function verifyEvidence(runDir, attempt, plan, planSha256, indexed) {
     const seenKinds = new Set();
     const seenPaths = new Set();
     const scope = `${attemptDir}/evidence/${claimedStep.id}/`;
+    const evidenceFiles = new Map();
 
     for (const file of claimedStep.files) {
       canonicalRelative(file.path);
@@ -165,16 +168,71 @@ async function verifyEvidence(runDir, attempt, plan, planSha256, indexed) {
         throw verifierError('HONOLOLO_PNG_SIGNATURE_INVALID', file.path);
       }
       verified.push({ step_id: claimedStep.id, ...file });
+      evidenceFiles.set(file.kind, {
+        kind: file.kind,
+        path: file.path,
+        size: bytes.length,
+        sha256: file.sha256,
+        bytes: file.kind === 'screenshot' ? bytes.subarray(0, PNG_SIGNATURE.length) : bytes,
+      });
     }
     if (seenKinds.size !== expectedKinds.size ||
         [...expectedKinds].some((kind) => !seenKinds.has(kind))) {
       throw verifierError('HONOLOLO_EVIDENCE_KIND_SET_INVALID', claimedStep.id);
     }
+    const paired = pairedScreenshotDigest(evidenceFiles.get('snapshot'));
+    if (paired !== null && evidenceFiles.get('screenshot')?.sha256 !== paired) {
+      throw verifierError('HONOLOLO_CAPTURE_PAIR_INVALID', claimedStep.id);
+    }
+    stepsById.set(claimedStep.id, { id: claimedStep.id, files: evidenceFiles });
   }
   if (seenSteps.size !== indexed.steps.size) {
     throw verifierError('HONOLOLO_EVIDENCE_STEP_MISSING');
   }
-  return verified;
+  return { verified, stepsById };
+}
+
+// A step that repeats another step's captured bytes observed nothing new, so a copied capture cannot
+// stand in as independent evidence. Two steps are duplicates when their snapshots are byte-identical
+// and their screenshots agree — identical for both, or absent from both. A shared snapshot beside
+// differing screenshots is left alone: scrolling a page changes its pixels without changing its text,
+// and that is an ordinary way for two steps to observe one document.
+function duplicateCaptures(verified) {
+  const byStep = new Map();
+  for (const file of verified) {
+    if (file.kind !== 'snapshot' && file.kind !== 'screenshot') continue;
+    const digests = byStep.get(file.step_id) ?? {};
+    digests[file.kind] = file.sha256;
+    byStep.set(file.step_id, digests);
+  }
+  const seen = new Map();
+  const duplicates = [];
+  for (const [stepId, digests] of byStep) {
+    if (!digests.snapshot) continue;
+    const key = `${digests.snapshot}\0${digests.screenshot ?? ''}`;
+    const earlier = seen.get(key);
+    if (earlier === undefined) seen.set(key, stepId);
+    else duplicates.push({ steps: [earlier, stepId], sha256: digests.snapshot });
+  }
+  return duplicates;
+}
+
+// Re-evaluates every deterministic criterion from the evidence bytes instead of trusting the
+// executor's own account of them. A verdict weaker than the evidence supports is a structural
+// failure, not a judgment call, and a criterion left unreported is not silently dropped.
+function crossCheckDeterministic(plan, status, stepsById) {
+  const evaluated = new Map(evaluateAttempt(plan, stepsById).map((record) => [record.id, record]));
+  const claimed = new Map(status.criteria.map((criterion) => [criterion.id, criterion]));
+  for (const [id, record] of evaluated) {
+    const criterion = claimed.get(id);
+    if (!criterion) throw verifierError('HONOLOLO_STATUS_CRITERION_MISSING', id);
+    if (weakerThanEvidence(criterion.verdict, record.verdict)) {
+      throw verifierError(
+        'HONOLOLO_STATUS_VERDICT_UNSUPPORTED',
+        `${id}: claimed ${criterion.verdict}, evidence supports ${record.verdict}`,
+      );
+    }
+  }
 }
 
 function verifyReviewEvidence(review, files, criterionOwners, errorCode) {
@@ -245,8 +303,11 @@ async function attemptHistory(runDir, plan, planSha256, selected, indexed) {
       history.push({ attempt, outcome: 'interrupted' });
       continue;
     }
-    const files = await verifyEvidence(runDir, attempt, plan, planSha256, indexed);
+    const { verified: files, stepsById } = await verifyEvidence(
+      runDir, attempt, plan, planSha256, indexed,
+    );
     validateAttemptReview(plan, status, 'deterministic', attempt, files, indexed);
+    crossCheckDeterministic(plan, status, stepsById);
 
     let fresh = null;
     try {
@@ -266,7 +327,8 @@ async function attemptHistory(runDir, plan, planSha256, selected, indexed) {
   return { history, selectedFiles, selectedHasStatus };
 }
 
-function needsHistoryReview(history) {
+function needsHistoryReview(history, duplicates) {
+  if (duplicates.length > 0) return true;
   return history.at(-1)?.outcome === 'pass' &&
     history.slice(0, -1).some(({ outcome }) => UNSAFE_HISTORY.has(outcome));
 }
@@ -303,6 +365,7 @@ export async function verifyRun({ runDir, attempt } = {}) {
     history: [],
     files: [],
     amendments: [],
+    duplicate_captures: [],
     errors: [],
     requires_human_review: false,
   };
@@ -319,6 +382,18 @@ export async function verifyRun({ runDir, attempt } = {}) {
     const planRecord = await readJson(runDir, 'plan/approved.json', 'plan');
     const plan = planRecord.value;
     if (plan.run_id !== run.id) throw verifierError('HONOLOLO_RUN_PLAN_ID_INVALID');
+    // The approved plan claims a proposal digest; without this check that claim is unverified and an
+    // approval can be bound to a proposal that was never written or was rewritten afterwards.
+    let proposal;
+    try {
+      proposal = await readChecked(runDir, 'plan/proposal.md');
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      throw verifierError('HONOLOLO_PROPOSAL_MISSING', 'plan/proposal.md');
+    }
+    if (sha256(proposal) !== plan.approved.proposal_sha256) {
+      throw verifierError('HONOLOLO_PROPOSAL_SHA256_INVALID');
+    }
     const indexed = planIndex(plan);
     result.run_id = run.id;
     result.plan_sha256 = sha256(planRecord.bytes);
@@ -331,7 +406,8 @@ export async function verifyRun({ runDir, attempt } = {}) {
       runDir, plan, result.plan_sha256, selected, indexed,
     );
     result.history = verified.history;
-    result.requires_human_review = needsHistoryReview(result.history);
+    result.duplicate_captures = duplicateCaptures(verified.selectedFiles);
+    result.requires_human_review = needsHistoryReview(result.history, result.duplicate_captures);
     if (!verified.selectedHasStatus) throw verifierError('HONOLOLO_ATTEMPT_INTERRUPTED');
     result.files = verified.selectedFiles;
     result.amendments = await verifyAmendments(runDir, run.id);
@@ -342,18 +418,52 @@ export async function verifyRun({ runDir, attempt } = {}) {
   return result;
 }
 
+const USAGE = '<run-dir> [--attempt <positive-integer>] [--write initial|final]';
+
 function parseArguments(argv) {
-  if (argv.length === 1) return { runDir: argv[0] };
-  if (argv.length === 3 && argv[1] === '--attempt' && /^\d+$/u.test(argv[2])) {
-    return { runDir: argv[0], attempt: Number(argv[2]) };
+  const options = { runDir: argv[0], write: null };
+  if (typeof options.runDir !== 'string' || options.runDir === '' ||
+      options.runDir.startsWith('--')) {
+    throw verifierError('HONOLOLO_VERIFY_USAGE', USAGE);
   }
-  throw verifierError('HONOLOLO_VERIFY_USAGE', '<run-dir> [--attempt <positive-integer>]');
+  for (let index = 1; index < argv.length; index += 2) {
+    const flag = argv[index];
+    const value = argv[index + 1];
+    if (typeof value !== 'string' || value === '') throw verifierError('HONOLOLO_VERIFY_USAGE', USAGE);
+    if (flag === '--attempt') {
+      if (!/^\d+$/u.test(value)) throw verifierError('HONOLOLO_VERIFY_USAGE', USAGE);
+      options.attempt = Number(value);
+    } else if (flag === '--write') {
+      if (value !== 'initial' && value !== 'final') {
+        throw verifierError('HONOLOLO_VERIFY_USAGE', USAGE);
+      }
+      options.write = value;
+    } else throw verifierError('HONOLOLO_VERIFY_USAGE', USAGE);
+  }
+  return options;
+}
+
+// Records the exact bytes it printed, so the run's verifier record cannot drift from the result the
+// operator read. The file is created exclusively: an existing record is never replaced.
+async function writeRecord(runDir, attempt, stage, bytes) {
+  const relative = `attempts/${String(attempt).padStart(3, '0')}/verifier.${stage}.json`;
+  const path = jobRelative(runDir, relative);
+  await mkdir(resolve(path, '..'), { recursive: true, mode: 0o700 });
+  try {
+    await writeFile(path, bytes, { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (error?.code === 'EEXIST') throw verifierError('HONOLOLO_VERIFIER_RECORD_EXISTS', relative);
+    throw error;
+  }
+  return relative;
 }
 
 async function main(argv) {
+  let options = null;
   let result;
   try {
-    result = await verifyRun(parseArguments(argv));
+    options = parseArguments(argv);
+    result = await verifyRun(options);
   } catch (error) {
     result = {
       ok: false,
@@ -363,11 +473,30 @@ async function main(argv) {
       history: [],
       files: [],
       amendments: [],
+      duplicate_captures: [],
       errors: [error?.message ?? String(error)],
       requires_human_review: false,
     };
   }
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  const bytes = `${JSON.stringify(result)}\n`;
+  process.stdout.write(bytes);
+  // Only a successful verification is recorded. A rejected one is reported and the attempt is
+  // abandoned, so freezing its result would spend the attempt's one record slot on a run nobody
+  // continues — and would leave a later, valid verification of that attempt with nowhere to write.
+  if (options?.write) {
+    if (!result.ok || result.attempt === null) {
+      process.stderr.write(
+        `HONOLOLO_VERIFIER_RECORD_SKIPPED: ${options.write} not recorded for a rejected run\n`,
+      );
+    } else {
+      try {
+        await writeRecord(options.runDir, result.attempt, options.write, bytes);
+      } catch (error) {
+        process.stderr.write(`${error.message}\n`);
+        process.exitCode = 1;
+      }
+    }
+  }
   if (!result.ok) process.exitCode = 1;
 }
 

@@ -9,10 +9,7 @@ const PNG_SIGNATURE = Buffer.from('89504e470d0a1a0a', 'hex');
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_EVIDENCE_BYTES = 64 * 1024 * 1024;
 const VERDICT_ORDER = { pass: 0, needs_human: 1, fail: 2 };
-const TEMPLATE_URLS = {
-  qa: new URL('../templates/qa-result.md', import.meta.url),
-  manual: new URL('../templates/manual.md', import.meta.url),
-};
+const TEMPLATE_NAMES = { qa: 'qa-result', manual: 'manual' };
 
 function sha256(bytes) {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -57,15 +54,30 @@ async function optionalReview(runDir, path) {
   }
 }
 
+// Escapes only what can change how a line renders or smuggle markup: link and emphasis syntax,
+// code spans, table cells, and raw HTML. Brackets stay escaped, so `[text](url)` from page content
+// can never become a live link — which means parentheses, `#`, and `!` need no backslash and prose
+// (notably non-English prose full of parentheses) stays readable.
 function markdownText(value) {
   return String(value)
     .replace(/\r\n?|\n/gu, ' ')
     .replace(/\\/gu, '\\\\')
-    .replace(/([`*_{}\[\]()<>#+!|])/gu, '\\$1');
+    .replace(/([`*_[\]<>|])/gu, '\\$1');
 }
 
 function fillTemplate(template, values) {
   return template.replace(/\{\{([a-z_]+)\}\}/gu, (_, key) => values[key] ?? '');
+}
+
+// A run may ship its own presentation under `<run-dir>/templates/`: section order, labels, and
+// output language belong to the deliverable, not to the harness. Falls back to the packaged default.
+async function loadTemplate(runDir, name) {
+  try {
+    return (await readRegular(jobRelative(runDir, `templates/${name}.md`), name)).toString('utf8');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    return readFile(new URL(`../templates/${name}.md`, import.meta.url), 'utf8');
+  }
 }
 
 function criterionIndex(plan) {
@@ -252,7 +264,7 @@ function stepPublishGate(criteria, aggregate, requiresHumanReview) {
   return (step) => !globalBlocked && !blockedSteps.has(step.id);
 }
 
-async function manualSteps(runDir, plan, files, publishStep) {
+async function manualSteps(runDir, plan, files, publishStep, stepTemplate) {
   const screenshots = new Map(files
     .filter((file) => file.kind === 'screenshot')
     .map((file) => [file.step_id, file]));
@@ -261,25 +273,23 @@ async function manualSteps(runDir, plan, files, publishStep) {
   let published = 0;
   for (const step of plan.steps.filter(({ manual }) => manual)) {
     const index = rendered.length + 1;
-    let image = 'Image: Unpublished pending review.';
+    let image = 'Unpublished pending review.';
     if (publishStep(step)) {
       const asset = await screenshotAsset(runDir, step, screenshots.get(step.id), index);
       assets.push(asset);
-      image = `Image: ![${markdownText(imageAlt(step))}](assets/${asset.name})`;
+      image = `![${markdownText(imageAlt(step))}](assets/${asset.name})`;
       published += 1;
     }
-    const cautions = step.manual.cautions.length === 0
-      ? 'None.'
-      : step.manual.cautions.map(markdownText).join('; ');
-    rendered.push([
-      `### ${index}. ${markdownText(step.manual.title)}`,
-      '',
-      `Title: ${markdownText(step.manual.title)}`,
-      `Action: ${markdownText(step.manual.instruction)}`,
-      `Expected: ${markdownText(step.manual.expected)}`,
+    rendered.push(fillTemplate(stepTemplate, {
+      index: String(index),
+      title: markdownText(step.manual.title),
+      instruction: markdownText(step.manual.instruction),
+      expected: markdownText(step.manual.expected),
       image,
-      `Caution: ${cautions}`,
-    ].join('\n'));
+      cautions: step.manual.cautions.length === 0
+        ? 'None.'
+        : step.manual.cautions.map(markdownText).join('; '),
+    }).trimEnd());
   }
   if (rendered.length === 0) throw renderError('MANUAL_STEPS_MISSING');
   return { markdown: rendered.join('\n\n'), assets, published, total: rendered.length };
@@ -319,18 +329,18 @@ async function createExclusive(path, bytes, conflictCode, label) {
   }
 }
 
-async function publishOutput(runDir, relative, markdown, assets = []) {
+async function publishOutput(runDir, outputRoot, name, markdown, assets = []) {
+  const relative = `${outputRoot}/${name}`;
   const document = Buffer.from(markdown, 'utf8');
   const destination = jobRelative(runDir, relative);
-  const outputDir = jobRelative(runDir, 'output');
-  await preflightDirectory(outputDir, 'output');
+  await preflightDirectory(jobRelative(runDir, outputRoot), outputRoot);
   if (assets.length > 0) {
-    await preflightDirectory(jobRelative(runDir, 'output/assets'), 'output/assets');
+    await preflightDirectory(jobRelative(runDir, `${outputRoot}/assets`), `${outputRoot}/assets`);
   }
   await preflightFile(destination, document, 'OUTPUT_CONFLICT', relative);
   const prepared = assets.map((asset) => ({
     ...asset,
-    destination: jobRelative(runDir, `output/assets/${asset.name}`),
+    destination: jobRelative(runDir, `${outputRoot}/assets/${asset.name}`),
   }));
   for (const asset of prepared) {
     await preflightFile(
@@ -365,14 +375,19 @@ export async function renderRun({ runDir, attempt, type } = {}) {
     deterministic,
     ...(fresh ? [fresh] : []),
   ]);
-  const template = await readFile(TEMPLATE_URLS[type], 'utf8');
+  const template = await loadTemplate(runDir, TEMPLATE_NAMES[type]);
   const scope = [
     `Goal: ${markdownText(run.goal)}`,
     `Steps: ${plan.steps.map((step) => markdownText(step.goal)).join('; ')}`,
   ].join('\n');
+  // Attempt 1 owns `output/`; a later attempt publishes beside it under `output/attempt-<NNN>/`.
+  // Retries therefore deliver a document instead of dead-ending on immutable prior output.
+  const outputRoot = verified.attempt === 1
+    ? 'output'
+    : `output/attempt-${String(verified.attempt).padStart(3, '0')}`;
 
   if (type === 'qa') {
-    return publishOutput(runDir, 'output/result.md', fillTemplate(template, {
+    return publishOutput(runDir, outputRoot, 'result.md', fillTemplate(template, {
       run_id: markdownText(verified.run_id),
       scope,
       environment: environment(run, verified.attempt),
@@ -393,8 +408,9 @@ export async function renderRun({ runDir, attempt, type } = {}) {
   const manual = await manualSteps(
     runDir, plan, verified.files,
     stepPublishGate(criteria, aggregate, verified.requires_human_review),
+    await loadTemplate(runDir, 'manual.step'),
   );
-  return publishOutput(runDir, 'output/manual.md', fillTemplate(template, {
+  return publishOutput(runDir, outputRoot, 'manual.md', fillTemplate(template, {
     run_id: markdownText(verified.run_id),
     scope,
     environment: environment(run, verified.attempt),

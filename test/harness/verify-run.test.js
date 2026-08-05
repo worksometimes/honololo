@@ -4,14 +4,17 @@ import { mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promise
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { sealAttempt } from '../../harness/scripts/seal.mjs';
 import { verifyRun } from '../../harness/scripts/verify-run.mjs';
 import {
-  addTraversal, addUnapprovedKind, duplicateKind,
-  fixtureWithFailedFirstAttemptAndSuccessfulSecond,
+  addTraversal, addUnapprovedKind, duplicateKind, fixtureWithCopiedSnapshotOnlyStep,
+  fixtureWithDuplicatedCapture, fixtureWithFailedFirstAttemptAndSuccessfulSecond,
   fixtureWithHistoricalFreshFailure, fixtureWithHistoricalMissingFresh,
-  fixtureWithInterruptedFirstAttemptAndSuccessfulSecond, missingStatusEvidence,
-  replaceWithSymlink, tamperApprovedPlan, tamperByteCount, tamperHash, treeDigest,
-  validRunFixture, writeFakePng, writeOversizeEvidence, wrongStepStatusEvidence,
+  fixtureWithInterruptedFirstAttemptAndSuccessfulSecond,
+  fixtureWithSharedSnapshotDistinctScreenshots, missingStatusEvidence, refreshEvidenceOnly,
+  replaceWithSymlink, reviewedQaFixture, sealableFixture, tamperApprovedPlan, tamperByteCount,
+  tamperHash, treeDigest, validRunFixture, writeFakePng, writeOversizeEvidence,
+  wrongStepStatusEvidence,
 } from './helpers.mjs';
 
 const verifierScript = fileURLToPath(new URL('../../harness/scripts/verify-run.mjs', import.meta.url));
@@ -22,8 +25,8 @@ test('verifies the latest complete attempt without mutating the run', async () =
   const result = await verifyRun({ runDir });
 
   assert.deepEqual(Object.keys(result), [
-    'ok', 'run_id', 'attempt', 'plan_sha256', 'history', 'files', 'amendments', 'errors',
-    'requires_human_review',
+    'ok', 'run_id', 'attempt', 'plan_sha256', 'history', 'files', 'amendments',
+    'duplicate_captures', 'errors', 'requires_human_review',
   ]);
   assert.equal(result.ok, true);
   assert.equal(result.attempt, 1);
@@ -190,4 +193,156 @@ test('direct invocation emits one JSON record with status zero or one', async (t
     assert.equal(child.stdout.trim().split('\n').length, 1);
     assert.equal(JSON.parse(child.stdout).ok, false);
   });
+});
+
+test('binds the approved plan to the proposal it was approved from', async () => {
+  const runDir = await validRunFixture();
+  await writeFile(join(runDir, 'plan/proposal.md'), '# Rewritten after approval\n');
+  const result = await verifyRun({ runDir });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join('\n'), /HONOLOLO_PROPOSAL_SHA256_INVALID/u);
+});
+
+test('rejects a deterministic pass the captured evidence does not support', async () => {
+  const runDir = await validRunFixture();
+  await writeFile(join(runDir, 'attempts/001/evidence/home/snapshot.md'), '# Home\n\nLoading\n');
+  await refreshEvidenceOnly(runDir);
+  const result = await verifyRun({ runDir });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join('\n'), /HONOLOLO_STATUS_VERDICT_UNSUPPORTED: home-ready/u);
+});
+
+test('rejects a deterministic criterion the status never reports', async () => {
+  const runDir = await validRunFixture();
+  const path = join(runDir, 'attempts/001/status.json');
+  const status = JSON.parse(await readFile(path, 'utf8'));
+  status.criteria = status.criteria.filter(({ id }) => id !== 'home-ready');
+  await writeFile(path, `${JSON.stringify(status)}\n`);
+  const result = await verifyRun({ runDir });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join('\n'), /HONOLOLO_STATUS_CRITERION_MISSING: home-ready/u);
+});
+
+test('reports a step whose snapshot and screenshot both repeat another step', async () => {
+  const runDir = await fixtureWithDuplicatedCapture();
+  const result = await verifyRun({ runDir });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.duplicate_captures.map(({ steps }) => steps), [['home', 'copy']]);
+  assert.equal(result.requires_human_review, true);
+});
+
+test('records its own exact result bytes once per stage', async () => {
+  const runDir = await validRunFixture();
+  const record = join(runDir, 'attempts/001/verifier.initial.json');
+  const first = spawnSync(
+    process.execPath, [verifierScript, runDir, '--write', 'initial'], { encoding: 'utf8' },
+  );
+  assert.equal(first.status, 0);
+  assert.equal(await readFile(record, 'utf8'), first.stdout);
+  assert.equal(JSON.parse(await readFile(record, 'utf8')).ok, true);
+
+  const second = spawnSync(
+    process.execPath, [verifierScript, runDir, '--write', 'initial'], { encoding: 'utf8' },
+  );
+  assert.equal(second.status, 1);
+  assert.match(second.stderr, /HONOLOLO_VERIFIER_RECORD_EXISTS/u);
+  assert.equal(await readFile(record, 'utf8'), first.stdout);
+});
+
+test('rejects an unknown write stage and skips recording an unresolvable attempt', async () => {
+  const runDir = await validRunFixture();
+  const bad = spawnSync(
+    process.execPath, [verifierScript, runDir, '--write', 'middle'], { encoding: 'utf8' },
+  );
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /HONOLOLO_VERIFY_USAGE/u);
+
+  await rm(join(runDir, 'run.json'));
+  const skipped = spawnSync(
+    process.execPath, [verifierScript, runDir, '--write', 'final'], { encoding: 'utf8' },
+  );
+  assert.equal(skipped.status, 1);
+  assert.match(skipped.stderr, /HONOLOLO_VERIFIER_RECORD_SKIPPED/u);
+});
+
+test('reports a missing proposal with a harness code, not a filesystem path', async () => {
+  const runDir = await validRunFixture();
+  await rm(join(runDir, 'plan/proposal.md'));
+  const result = await verifyRun({ runDir });
+  assert.equal(result.ok, false);
+  const errors = result.errors.join('\n');
+  assert.match(errors, /HONOLOLO_PROPOSAL_MISSING: plan\/proposal\.md/u);
+  assert.doesNotMatch(errors, /ENOENT/u);
+  assert.equal(errors.includes(runDir), false);
+});
+
+test('rejects a deterministic failure recorded as merely unresolved', async () => {
+  const runDir = await validRunFixture();
+  await writeFile(join(runDir, 'attempts/001/evidence/home/snapshot.md'), '# Home\n\nLoading\n');
+  await refreshEvidenceOnly(runDir);
+  const path = join(runDir, 'attempts/001/status.json');
+  const status = JSON.parse(await readFile(path, 'utf8'));
+  status.criteria.find(({ id }) => id === 'home-ready').verdict = 'needs_human';
+  status.outcome = 'needs_human';
+  await writeFile(path, `${JSON.stringify(status)}\n`);
+
+  const result = await verifyRun({ runDir });
+  assert.equal(result.ok, false);
+  assert.match(
+    result.errors.join('\n'),
+    /HONOLOLO_STATUS_VERDICT_UNSUPPORTED: home-ready: claimed needs_human, evidence supports fail/u,
+  );
+});
+
+test('reports a copied capture even when the steps have no screenshots', async () => {
+  const runDir = await fixtureWithCopiedSnapshotOnlyStep();
+  const result = await verifyRun({ runDir });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.duplicate_captures.map(({ steps }) => steps), [['home', 'copy']]);
+  assert.equal(result.requires_human_review, true);
+});
+
+test('leaves a shared snapshot alone when the screenshots differ', async () => {
+  const runDir = await fixtureWithSharedSnapshotDistinctScreenshots();
+  const result = await verifyRun({ runDir });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.duplicate_captures, []);
+  assert.equal(result.requires_human_review, false);
+});
+
+test('a rejected verification never consumes the attempt record slot', async () => {
+  const runDir = await sealableFixture();
+  const record = join(runDir, 'attempts/001/verifier.initial.json');
+  const premature = spawnSync(
+    process.execPath, [verifierScript, runDir, '--attempt', '1', '--write', 'initial'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(premature.status, 1);
+  assert.equal(JSON.parse(premature.stdout).ok, false);
+  assert.match(premature.stderr, /HONOLOLO_VERIFIER_RECORD_SKIPPED/u);
+  await assert.rejects(readFile(record), /ENOENT/u);
+
+  await sealAttempt({ runDir, attempt: 1 });
+  const sealed = spawnSync(
+    process.execPath, [verifierScript, runDir, '--attempt', '1', '--write', 'initial'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(sealed.status, 0);
+  assert.equal(sealed.stderr, '');
+  assert.equal(await readFile(record, 'utf8'), sealed.stdout);
+});
+
+test('records a final result after a fresh review is added', async () => {
+  const runDir = await reviewedQaFixture();
+  const final = spawnSync(
+    process.execPath, [verifierScript, runDir, '--attempt', '1', '--write', 'final'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(final.status, 0);
+  assert.equal(final.stderr, '');
+  const record = JSON.parse(
+    await readFile(join(runDir, 'attempts/001/verifier.final.json'), 'utf8'),
+  );
+  assert.equal(record.ok, true);
+  assert.deepEqual(record.history, [{ attempt: 1, outcome: 'pass' }]);
 });

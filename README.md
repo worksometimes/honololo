@@ -81,8 +81,15 @@ Claude Code는 [.claude/skills/honololo/SKILL.md](.claude/skills/honololo/SKILL.
 │   └── verifier.final.json
 └── output/
     ├── result.md
-    └── manual.md
+    ├── manual.md
+    └── attempt-002/      # 재시도가 앞선 산출물을 덮지 않고 나란히 납품하는 자리
 ```
+
+JSON 장부는 더 이상 손으로 쓰지 않는다. `evidence.json`과 `status.json`은
+`harness/scripts/seal.mjs`가 캡처된 증거를 훑어 만들고, `verifier.*.json`은 검증기가 `--write`로
+제 결과를 직접 기록하며, `fresh.json`은 격리된 평가자가 내놓은 바이트를 그대로 옮긴다.
+에이전트가 직접 쓰는 것은 `plan/proposal.md`, `plan/approved.json`, 그리고 자기 행위 기록인
+`actions.json` 뿐이다. 사무 작업은 하네스 몫이고 판단만 사람과 에이전트 몫이다.
 
 `.honololo/`는 Git에서 제외된다. 실제 URL, 자격증명, 쿠키, 토큰, 개인정보를 tracked
 파일에 넣는 행위는 허가되지 않는다. 인증이 필요하면 런타임이 통제하는 브라우저에서 사용자가
@@ -113,9 +120,14 @@ git diff --check
 검증기와 렌더러, 그리고 매뉴얼 캡처용 스크린샷 주석기(`harness/scripts/annotate.mjs` — 박스,
 번호 배지, 라벨, 커버, 블러, 스냅샷 ref 해석)만 책임진다. 여기에 CDP 브라우저 트랜스포트
 (`harness/scripts/browser.mjs` — URL 부분일치 탭 타겟팅, 도메인/스코프 가드, 원자적
-스냅샷+스크린샷 페어 캡처), 오프셋 사이드카를 남기는 크롭 헬퍼(`harness/scripts/crop.mjs`),
-납품 후 자산 교체 이력을 남기는 수정 도구(`harness/scripts/amend.mjs`)가 붙는다. 판단은
-에이전트가 하고, 믿을지 말지는 HONOLOLO가 결정한다.
+스냅샷+스크린샷 페어 캡처, 영역 한정 캡처), 증거를 매니페스트와 결정론적 판정으로 봉인하는
+`harness/scripts/seal.mjs`, 오프셋 사이드카를 남기는 크롭 헬퍼(`harness/scripts/crop.mjs`),
+납품 후 자산 교체 이력을 남기는 수정 도구(`harness/scripts/amend.mjs`)가 붙는다.
+
+검증기는 시도가 스스로 한 진술을 믿지 않는다. 승인 계획을 제안서 해시와 대조하고, 결정론적
+기준을 증거 바이트에서 다시 평가해 근거 없는 `pass`를 거부하며, 스냅샷 텍스트와 스크린샷
+픽셀이 모두 같은 두 단계를 중복 캡처로 보고한다. 판단은 에이전트가 하고, 믿을지 말지는
+HONOLOLO가 결정한다.
 
 ## 면허
 

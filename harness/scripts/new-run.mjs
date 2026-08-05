@@ -53,16 +53,26 @@ export async function createRun({ root, request, now = new Date() }) {
 }
 
 function parseArguments(argv) {
-  if (argv.length !== 4 || argv[0] !== '--root' || argv[2] !== '--request') {
-    throw new TypeError('HONOLOLO_NEW_RUN_USAGE: --root <path> --request <json-file>');
+  if (argv.length === 3 && argv[0] === '--root' && argv[2] === '--stdin') {
+    return { root: argv[1], requestPath: null };
   }
-  return { root: argv[1], requestPath: argv[3] };
+  if (argv.length === 4 && argv[0] === '--root' && argv[2] === '--request') {
+    return { root: argv[1], requestPath: argv[3] };
+  }
+  throw new TypeError('HONOLOLO_NEW_RUN_USAGE: --root <path> (--stdin | --request <json-file>)');
+}
+
+async function readStdin() {
+  let source = '';
+  process.stdin.setEncoding('utf8');
+  for await (const chunk of process.stdin) source += chunk;
+  return source;
 }
 
 async function main(argv) {
   const { root, requestPath } = parseArguments(argv);
-  const request = JSON.parse(await readFile(requestPath, 'utf8'));
-  const created = await createRun({ root, request });
+  const source = requestPath === null ? await readStdin() : await readFile(requestPath, 'utf8');
+  const created = await createRun({ root, request: JSON.parse(source) });
   process.stdout.write(`${JSON.stringify({ run_dir: created.runDir })}\n`);
 }
 

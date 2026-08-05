@@ -19,6 +19,10 @@ Before changing or operating it, read:
 - Preserve user changes and use `apply_patch` for text edits.
 - Never weaken assertions, add silent retries, rewrite an approved plan, or promote a self-healed
   interaction to an ordinary pass.
+- Never hand-author `evidence.json` or `status.json`; seal the attempt instead. Never repair a fresh
+  evaluator's review record — return it to the evaluator to re-emit.
+- Keep deterministic criterion evaluation in `harness/lib/criteria.mjs`, used by both the sealer that
+  writes a verdict and the verifier that re-derives it. One implementation, two independent readers.
 - Keep Claude Code and Codex aligned through `harness/` and the portable Skill. The Claude Skill
   remains a thin compatibility entrypoint.
 - Browser actions must use the target's exact allowed-domain boundary and fresh semantic references.

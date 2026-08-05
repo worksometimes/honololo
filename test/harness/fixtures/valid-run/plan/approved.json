@@ -5,19 +5,33 @@
   "approved": {
     "by": "user",
     "at": "2026-08-05T04:05:06Z",
-    "proposal_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    "proposal_sha256": "sha256:f697f2a55cdedb80034c882481591662edb026f88f890e549215f1d2ad155088"
   },
   "steps": [
     {
       "id": "home",
       "goal": "Observe the settled home page.",
       "risk": "low",
-      "evidence": ["url", "snapshot"],
+      "evidence": [
+        "url",
+        "snapshot"
+      ],
       "done_when": [
-        {"id": "home-url", "type": "url_matches", "value": "https://app.example.com/"},
-        {"id": "home-ready", "type": "snapshot_contains", "value": "Ready"}
+        {
+          "id": "home-url",
+          "type": "url_matches",
+          "value": "https://app.example.com/"
+        },
+        {
+          "id": "home-ready",
+          "type": "snapshot_contains",
+          "value": "Ready"
+        }
       ]
     }
   ],
-  "review": {"fresh_evaluator": false, "criteria": []}
+  "review": {
+    "fresh_evaluator": false,
+    "criteria": []
+  }
 }

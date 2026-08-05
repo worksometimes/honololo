@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, posix, relative, resolve, sep } from 'node:path';
 import { createRun } from '../../harness/scripts/new-run.mjs';
 import { renderRun } from '../../harness/scripts/render.mjs';
+import { sealAttempt } from '../../harness/scripts/seal.mjs';
 
 const CAPTURED_AT = '2026-08-05T04:05:06Z';
 const FIXTURE_ORIGIN = 'http://127.0.0.1';
@@ -85,10 +86,9 @@ async function writeEvidenceFile(runDir, path, bytes) {
   const content = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes, 'utf8');
   await mkdir(dirname(join(runDir, path)), { recursive: true });
   await writeFile(join(runDir, path), content);
-  return { bytes: content.length, sha256: digest(content) };
 }
 
-async function populateAttempt(runDir, type, planBytes) {
+async function populateAttempt(runDir, type) {
   const stepId = type === 'qa' ? 'home' : 'settings';
   const evidenceRoot = `attempts/001/evidence/${stepId}`;
   const definitions = type === 'qa' ? [
@@ -110,36 +110,14 @@ async function populateAttempt(runDir, type, planBytes) {
     { kind: 'screenshot', name: 'screen.png', bytes: PNG },
   ];
 
-  const files = [];
+  const evidence = {};
   for (const definition of definitions) {
     const path = `${evidenceRoot}/${definition.name}`;
-    const metadata = await writeEvidenceFile(runDir, path, definition.bytes);
-    files.push({
-      kind: definition.kind, path, ...metadata, captured_at: CAPTURED_AT,
-    });
+    await writeEvidenceFile(runDir, path, definition.bytes);
+    evidence[definition.kind] = path;
   }
-  await writeFile(join(runDir, 'attempts/001/evidence.json'), json({
-    schema_version: '1', run_id: `fixture-${type}`, attempt: 1,
-    plan_sha256: digest(planBytes), steps: [{ id: stepId, files }],
-  }));
-
-  const evidence = Object.fromEntries(files.map((file) => [file.kind, file.path]));
-  const deterministicCriteria = type === 'qa' ? [
-    ['home-url', evidence.url, 'The captured URL matches the approved local fixture.'],
-    ['home-heading', evidence.snapshot, 'The settled snapshot contains the fixture heading.'],
-    ['home-action-record', evidence.actions, 'The action ledger is present.'],
-  ] : [
-    ['settings-url', evidence.url, 'The captured URL is the settings route.'],
-    ['settings-heading', evidence.snapshot, 'The settled snapshot contains the Settings heading.'],
-    ['settings-image', evidence.screenshot, 'The verified evidence includes a PNG screenshot.'],
-  ];
-  await writeFile(join(runDir, 'attempts/001/status.json'), json({
-    schema_version: '1', run_id: `fixture-${type}`, attempt: 1,
-    source: 'deterministic', outcome: 'pass',
-    criteria: deterministicCriteria.map(([id, path, reason]) => ({
-      id, verdict: 'pass', reason, evidence: [path],
-    })),
-  }));
+  // The manifest and the deterministic status are derived from these bytes, never hand-authored.
+  await sealAttempt({ runDir, attempt: 1 });
   if (type === 'manual') {
     await writeFile(join(runDir, 'attempts/001/fresh.json'), json({
       schema_version: '1', run_id: 'fixture-manual', attempt: 1,
@@ -171,10 +149,9 @@ export async function runFixtureScenario(type) {
   ].join('\n'));
   await writeFile(join(created.runDir, 'plan/proposal.md'), proposal);
   const plan = planFor(type, digest(proposal));
-  const planBytes = Buffer.from(json(plan));
-  await writeFile(join(created.runDir, 'plan/approved.json'), planBytes, { flag: 'wx' });
+  await writeFile(join(created.runDir, 'plan/approved.json'), Buffer.from(json(plan)), { flag: 'wx' });
   await mkdir(join(created.runDir, 'attempts/001'), { recursive: false });
-  await populateAttempt(created.runDir, type, planBytes);
+  await populateAttempt(created.runDir, type);
   await renderRun({ runDir: created.runDir, attempt: 1, type });
   return created.runDir;
 }

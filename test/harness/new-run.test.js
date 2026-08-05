@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { validateContract, validateReviewForPlan } from '../../harness/lib/contracts.mjs';
 import { createRun } from '../../harness/scripts/new-run.mjs';
+
+const newRunScript = fileURLToPath(new URL('../../harness/scripts/new-run.mjs', import.meta.url));
 
 const request = {
   schema_version: '1', id: 'settings-manual', type: 'manual',
@@ -117,4 +121,25 @@ test('rejects review criteria with unknown or duplicate IDs', () => {
       { id: 'settings-url', verdict: 'pass', reason: 'Still matches.', evidence: ['attempts/001/evidence/settings/url.txt'] },
     ],
   }), /REVIEW_PLAN_INVALID/);
+});
+
+test('creates a run from a request on stdin without a staging file', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'honololo-stdin-'));
+  const child = spawnSync(process.execPath, [newRunScript, '--root', root, '--stdin'], {
+    input: `${JSON.stringify(request)}\n`, encoding: 'utf8',
+  });
+  assert.equal(child.status, 0);
+  assert.equal(child.stderr, '');
+  const { run_dir: runDir } = JSON.parse(child.stdout);
+  assert.equal(runDir.startsWith(join(root, '.honololo/runs/')), true);
+  assert.deepEqual(JSON.parse(await readFile(join(runDir, 'run.json'), 'utf8')), request);
+});
+
+test('rejects an argument shape that is neither stdin nor a request file', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'honololo-stdin-'));
+  for (const argv of [['--root', root], ['--root', root, '--stdin', 'extra'], ['--stdin']]) {
+    const child = spawnSync(process.execPath, [newRunScript, ...argv], { encoding: 'utf8' });
+    assert.equal(child.status, 1);
+    assert.match(child.stderr, /HONOLOLO_NEW_RUN_USAGE/u);
+  }
 });

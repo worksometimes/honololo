@@ -6,6 +6,7 @@ HONOLOLO separates flexible agent work from deterministic trust decisions.
 Codex / Claude Code
   ├─ HONOLOLO Skill: intake, scout, approval, execution
   ├─ agent-browser: live browser actions and evidence capture
+  ├─ seal: evidence manifest and deterministic criterion evaluation
   ├─ verifier: schema, hashes, paths, attempts, criteria
   ├─ fresh evaluator: rubric criteria only, read-only and isolated
   └─ renderer: portable QA result or screenshot manual
@@ -13,6 +14,11 @@ Codex / Claude Code
 
 The Skill is the public interface. `harness/scripts/` are internal helpers and never browse,
 request approval, recover work, or make semantic judgments.
+
+Clerical artifacts are derived, not written by the agent. Sealing builds the evidence manifest and
+the deterministic status from captured bytes; the verifier records its own result; the renderer builds
+the deliverable. What remains for the agent to author is the proposal and the approved plan — the two
+places where judgment actually belongs.
 
 ## Trust boundary
 
