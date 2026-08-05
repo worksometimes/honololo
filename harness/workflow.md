@@ -114,6 +114,14 @@ possible, do not persist the snapshot or screenshot, mark its criterion insuffic
 outcome to `needs_human`; use `blocked` when required authorization or input is unavailable. Never
 rely on a harness script to redact captured text or pixels.
 
+For manual runs, screenshots may be annotated for readability with the deterministic helper
+`harness/scripts/annotate.mjs` (`--input <png> --spec <json-file> --output <png>`, spec per
+`harness/contracts/annotate.schema.json`): rounded boxes, numbered badges, label pills, neutral
+covers, and region blur. Annotate only a capture that already passed the pre-persistence gate;
+covers and blur are presentation, never a substitute for that gate or for masking secrets through
+the product UI. Persist the annotated file as the step's screenshot evidence and keep the raw
+capture out of `attempts/`, or skip annotation entirely.
+
 Store evidence under `attempts/<NNN>/evidence/<step-id>/`. Write `evidence.json` according to
 `harness/contracts/evidence.schema.json`, using run-relative canonical paths, actual byte counts, and
 SHA-256 values. Write `status.json` against `harness/contracts/review.schema.json` with source
