@@ -22,7 +22,7 @@ test('verifies the latest complete attempt without mutating the run', async () =
   const result = await verifyRun({ runDir });
 
   assert.deepEqual(Object.keys(result), [
-    'ok', 'run_id', 'attempt', 'plan_sha256', 'history', 'files', 'errors',
+    'ok', 'run_id', 'attempt', 'plan_sha256', 'history', 'files', 'amendments', 'errors',
     'requires_human_review',
   ]);
   assert.equal(result.ok, true);

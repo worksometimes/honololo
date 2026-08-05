@@ -204,10 +204,14 @@ function environment(run, attempt) {
   ].join('\n');
 }
 
-function manualReviewStatus(aggregate, criteria, requiresHumanReview) {
-  const qualification = aggregate.outcome === 'pass'
-    ? 'All declared review criteria passed.'
-    : 'This is a qualified draft. Screenshots are unpublished pending review.';
+function manualReviewStatus(aggregate, criteria, requiresHumanReview, manual) {
+  let qualification = 'All declared review criteria passed.';
+  if (aggregate.outcome !== 'pass') {
+    qualification = manual.published === 0
+      ? 'This is a qualified draft. Screenshots are unpublished pending review.'
+      : 'This is a qualified draft. Screenshots are published only for steps whose ' +
+        `criteria all passed (${manual.published} of ${manual.total}).`;
+  }
   return [
     `Overall: ${aggregate.outcome}`,
     `Qualification: ${qualification}`,
@@ -239,19 +243,30 @@ async function screenshotAsset(runDir, step, file, index) {
   return { name: `${String(index).padStart(3, '0')}-${step.id}.png`, bytes };
 }
 
-async function manualSteps(runDir, plan, files, publishScreenshots) {
+function stepPublishGate(criteria, aggregate, requiresHumanReview) {
+  const globalBlocked = requiresHumanReview || aggregate.outcome === 'fail';
+  const blockedSteps = new Set();
+  for (const criterion of criteria) {
+    if (criterion.verdict !== 'pass') blockedSteps.add(criterion.step.id);
+  }
+  return (step) => !globalBlocked && !blockedSteps.has(step.id);
+}
+
+async function manualSteps(runDir, plan, files, publishStep) {
   const screenshots = new Map(files
     .filter((file) => file.kind === 'screenshot')
     .map((file) => [file.step_id, file]));
   const rendered = [];
   const assets = [];
+  let published = 0;
   for (const step of plan.steps.filter(({ manual }) => manual)) {
     const index = rendered.length + 1;
     let image = 'Image: Unpublished pending review.';
-    if (publishScreenshots) {
+    if (publishStep(step)) {
       const asset = await screenshotAsset(runDir, step, screenshots.get(step.id), index);
       assets.push(asset);
       image = `Image: ![${markdownText(imageAlt(step))}](assets/${asset.name})`;
+      published += 1;
     }
     const cautions = step.manual.cautions.length === 0
       ? 'None.'
@@ -267,7 +282,7 @@ async function manualSteps(runDir, plan, files, publishScreenshots) {
     ].join('\n'));
   }
   if (rendered.length === 0) throw renderError('MANUAL_STEPS_MISSING');
-  return { markdown: rendered.join('\n\n'), assets };
+  return { markdown: rendered.join('\n\n'), assets, published, total: rendered.length };
 }
 
 async function preflightDirectory(path, label) {
@@ -376,14 +391,15 @@ export async function renderRun({ runDir, attempt, type } = {}) {
   }
 
   const manual = await manualSteps(
-    runDir, plan, verified.files, aggregate.outcome === 'pass',
+    runDir, plan, verified.files,
+    stepPublishGate(criteria, aggregate, verified.requires_human_review),
   );
   return publishOutput(runDir, 'output/manual.md', fillTemplate(template, {
     run_id: markdownText(verified.run_id),
     scope,
     environment: environment(run, verified.attempt),
     review_status: manualReviewStatus(
-      aggregate, criteria, verified.requires_human_review,
+      aggregate, criteria, verified.requires_human_review, manual,
     ),
     steps: manual.markdown,
   }), manual.assets);

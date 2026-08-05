@@ -67,7 +67,11 @@ function boxShape(annotation) {
       `stroke="${color}" stroke-width="2.75"/>`,
   ];
   if (annotation.label) {
-    const labelY = y >= LABEL_HEIGHT + 16 ? y - LABEL_HEIGHT - 10 : y + height + 10;
+    const position = annotation.labelPosition ??
+      (y >= LABEL_HEIGHT + 16 ? 'above' : 'below');
+    const labelY = position === 'above'
+      ? Math.max(y - LABEL_HEIGHT - 10, 2)
+      : y + height + 10;
     parts.push(labelPill(x, labelY, annotation.label, annotation.color));
   }
   if (annotation.badge) parts.push(badgeCircle(x, y, annotation.badge, annotation.color));

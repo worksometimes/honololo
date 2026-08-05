@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import { renderRun } from '../../harness/scripts/render.mjs';
 import {
   addReviewedRetry, fixtureWithHistoricalFreshFailure, fixtureWithHistoricalMissingFresh,
-  reviewedManualFixture, reviewedQaFixture, treeDigest, unverifiedFixture,
+  reviewedManualFixture, reviewedManualFixtureWithPartialStep, reviewedQaFixture, treeDigest,
+  unverifiedFixture,
 } from './helpers.mjs';
 
 test('aggregates criterion verdicts with fail over needs_human over pass', async () => {
@@ -139,6 +140,19 @@ test('withholds manual screenshots for failed, unresolved, or unsafe-history run
       await assert.rejects(readFile(join(runDir, 'output/assets/001-settings.png')), /ENOENT/u);
     });
   }
+});
+
+test('publishes screenshots per step for a qualified needs_human manual', async () => {
+  const runDir = await reviewedManualFixtureWithPartialStep();
+  const output = await renderRun({ runDir, attempt: 1, type: 'manual' });
+  const markdown = await readFile(output, 'utf8');
+
+  assert.match(markdown, /Overall: needs_human/u);
+  assert.match(markdown, /published only for steps whose criteria all passed \(1 of 2\)/u);
+  assert.match(markdown, /Image: !\[Open settings\]\(assets\/001-settings\.png\)/u);
+  assert.match(markdown, /Image: Unpublished pending review\./u);
+  await readFile(join(runDir, 'output/assets/001-settings.png'));
+  await assert.rejects(readFile(join(runDir, 'output/assets/002-profile.png')), /ENOENT/u);
 });
 
 test('qualifies a later pass after historical semantic failure or missing fresh review', async (t) => {

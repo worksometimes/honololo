@@ -111,8 +111,11 @@ git diff --check
 
 결정론적 코어는 의도적으로 작다. JSON Schema 계약, 불변 계획, 증거 해시, 시도 이력,
 검증기와 렌더러, 그리고 매뉴얼 캡처용 스크린샷 주석기(`harness/scripts/annotate.mjs` — 박스,
-번호 배지, 라벨, 커버, 블러)만 책임진다. 브라우징은 에이전트가 하고, 믿을지 말지는 HONOLOLO가
-결정한다.
+번호 배지, 라벨, 커버, 블러, 스냅샷 ref 해석)만 책임진다. 여기에 CDP 브라우저 트랜스포트
+(`harness/scripts/browser.mjs` — URL 부분일치 탭 타겟팅, 도메인/스코프 가드, 원자적
+스냅샷+스크린샷 페어 캡처), 오프셋 사이드카를 남기는 크롭 헬퍼(`harness/scripts/crop.mjs`),
+납품 후 자산 교체 이력을 남기는 수정 도구(`harness/scripts/amend.mjs`)가 붙는다. 판단은
+에이전트가 하고, 믿을지 말지는 HONOLOLO가 결정한다.
 
 ## 면허
 

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import sharp from 'sharp';
 import { annotateImage } from '../../harness/scripts/annotate.mjs';
+import { cropImage } from '../../harness/scripts/crop.mjs';
 
 const WIDTH = 400;
 const HEIGHT = 300;
@@ -118,4 +119,117 @@ test('annotateImage rejects invalid specs, bounds, and output conflicts', async 
     annotateImage({ input: path, spec, output }),
     /HONOLOLO_ANNOTATE_OUTPUT_CONFLICT/u,
   );
+  await annotateImage({ input: path, spec, output, force: true });
+});
+
+test('annotateImage resolves snapshot refs through crop sidecar offsets', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'honololo-annotate-'));
+  const { path } = await fixtureImage(directory);
+  const cropped = join(directory, 'cropped.png');
+  await cropImage({ input: path, rect: [20, 30, 300, 200], output: cropped });
+
+  const snapshot = {
+    url: 'https://app.example/settings',
+    elements: [{ ref: 'e7', role: 'button', tag: 'button', name: '더 보기', box: [40, 40, 120, 80] }],
+  };
+  const output = join(directory, 'ref-annotated.png');
+  const result = await annotateImage({
+    input: cropped,
+    spec: {
+      schema_version: '1',
+      annotations: [{ type: 'box', ref: 'e7', label: '더 보기', badge: 1 }],
+    },
+    snapshot,
+    output,
+  });
+  assert.equal(result.annotations, 1);
+
+  const raw = await sharp(output).removeAlpha().raw().toBuffer();
+  const pixel = (x, y) => {
+    const offset = (y * 300 + x) * 3;
+    return [raw[offset], raw[offset + 1], raw[offset + 2]];
+  };
+  // Element box [40,40] in source space lands at [20,10] after the [20,30] crop offset.
+  assert.notDeepEqual(pixel(80, 10), [255, 255, 255], 'box stroke should follow the offset rect');
+
+  await assert.rejects(
+    annotateImage({
+      input: cropped,
+      spec: { schema_version: '1', annotations: [{ type: 'box', ref: 'missing' }] },
+      snapshot,
+      output: join(directory, 'unknown-ref.png'),
+    }),
+    /HONOLOLO_ANNOTATE_REF_UNKNOWN/u,
+  );
+  await assert.rejects(
+    annotateImage({
+      input: cropped,
+      spec: { schema_version: '1', annotations: [{ type: 'box', ref: 'e7' }] },
+      output: join(directory, 'no-snapshot.png'),
+    }),
+    /HONOLOLO_ANNOTATE_SNAPSHOT_REQUIRED/u,
+  );
+});
+
+test('annotateImage translates manual rects only in source coordinate space', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'honololo-annotate-'));
+  const { path } = await fixtureImage(directory);
+  const cropped = join(directory, 'cropped.png');
+  await cropImage({ input: path, rect: [20, 30, 300, 200], output: cropped });
+
+  const output = join(directory, 'source-space.png');
+  await annotateImage({
+    input: cropped,
+    spec: {
+      schema_version: '1',
+      coordinate_space: 'source',
+      annotations: [{ type: 'cover', rect: [40, 40, 120, 80] }],
+    },
+    output,
+  });
+  const raw = await sharp(output).removeAlpha().raw().toBuffer();
+  const offset = (50 * 300 + 80) * 3;
+  const coverPixel = [raw[offset], raw[offset + 1], raw[offset + 2]];
+  for (const [channel, expected] of [[coverPixel[0], 0xe5], [coverPixel[1], 0xe8], [coverPixel[2], 0xeb]]) {
+    assert.equal(Math.abs(channel - expected) <= 8, true, 'cover should land at translated origin');
+  }
+
+  await assert.rejects(
+    annotateImage({
+      input: path,
+      spec: {
+        schema_version: '1',
+        coordinate_space: 'source',
+        annotations: [{ type: 'cover', rect: [0, 0, 10, 10] }],
+      },
+      output: join(directory, 'no-sidecar.png'),
+    }),
+    /HONOLOLO_ANNOTATE_SIDECAR_MISSING/u,
+  );
+});
+
+test('annotateImage places labels below the box when labelPosition demands it', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'honololo-annotate-'));
+  const { path } = await fixtureImage(directory);
+  const output = join(directory, 'label-below.png');
+
+  await annotateImage({
+    input: path,
+    spec: {
+      schema_version: '1',
+      annotations: [
+        { type: 'box', rect: [200, 100, 120, 60], label: '아래 라벨', labelPosition: 'below' },
+      ],
+    },
+    output,
+  });
+  const raw = await sharp(output).removeAlpha().raw().toBuffer();
+  const pixel = (x, y) => {
+    const offset = (y * WIDTH + x) * 3;
+    return [raw[offset], raw[offset + 1], raw[offset + 2]];
+  };
+  const below = pixel(220, 100 + 60 + 10 + 14);
+  assert.equal(below[2] > below[0], true, 'label pill should render below the box');
+  const above = pixel(220, 100 - 24);
+  assert.deepEqual(above, [255, 255, 255], 'no pill should render above the box');
 });

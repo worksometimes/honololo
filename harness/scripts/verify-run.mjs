@@ -271,6 +271,29 @@ function needsHistoryReview(history) {
     history.slice(0, -1).some(({ outcome }) => UNSAFE_HISTORY.has(outcome));
 }
 
+async function verifyAmendments(runDir, runId) {
+  let record;
+  try {
+    record = (await readJson(runDir, 'output/amendments.json', 'amendment')).value;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+  if (record.run_id !== runId) throw verifierError('HONOLOLO_AMENDMENT_RUN_ID_INVALID');
+  const latest = new Map();
+  for (const amendment of record.amendments) latest.set(amendment.asset, amendment);
+  for (const [asset, amendment] of latest) {
+    const bytes = await readChecked(runDir, `output/assets/${asset}`, MAX_EVIDENCE_BYTES);
+    if (sha256(bytes) !== amendment.sha256) {
+      throw verifierError('HONOLOLO_AMENDMENT_DIGEST_INVALID', asset);
+    }
+    if (!bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+      throw verifierError('HONOLOLO_PNG_SIGNATURE_INVALID', `output/assets/${asset}`);
+    }
+  }
+  return record.amendments;
+}
+
 export async function verifyRun({ runDir, attempt } = {}) {
   const result = {
     ok: false,
@@ -279,6 +302,7 @@ export async function verifyRun({ runDir, attempt } = {}) {
     plan_sha256: null,
     history: [],
     files: [],
+    amendments: [],
     errors: [],
     requires_human_review: false,
   };
@@ -310,6 +334,7 @@ export async function verifyRun({ runDir, attempt } = {}) {
     result.requires_human_review = needsHistoryReview(result.history);
     if (!verified.selectedHasStatus) throw verifierError('HONOLOLO_ATTEMPT_INTERRUPTED');
     result.files = verified.selectedFiles;
+    result.amendments = await verifyAmendments(runDir, run.id);
     result.ok = true;
   } catch (error) {
     result.errors.push(error?.message ?? String(error));
@@ -337,6 +362,7 @@ async function main(argv) {
       plan_sha256: null,
       history: [],
       files: [],
+      amendments: [],
       errors: [error?.message ?? String(error)],
       requires_human_review: false,
     };

@@ -412,6 +412,55 @@ export async function reviewedManualFixture({
   return runDir;
 }
 
+export async function reviewedManualFixtureWithPartialStep() {
+  const runDir = await reviewedManualFixture();
+  const planPath = join(runDir, 'plan/approved.json');
+  const plan = await readJson(planPath);
+  plan.steps.push({
+    id: 'profile', goal: 'Open the profile screen.', risk: 'low',
+    evidence: ['screenshot'],
+    done_when: [{ id: 'profile-ready', type: 'image_exists', value: 'profile screen' }],
+    manual: {
+      title: 'Open profile', instruction: 'Choose Profile from the account menu.',
+      expected: 'The Profile heading is visible.', cautions: [],
+    },
+  });
+  await writeFile(planPath, json(plan));
+
+  const screenshotPath = 'attempts/001/evidence/profile/screen.png';
+  await mkdir(join(runDir, 'attempts/001/evidence/profile'), { recursive: true });
+  await writeFile(join(runDir, screenshotPath), PNG);
+  const manifestPath = join(runDir, 'attempts/001/evidence.json');
+  const manifest = await readJson(manifestPath);
+  manifest.plan_sha256 = digest(await readFile(planPath));
+  manifest.steps.push({
+    id: 'profile', files: [{
+      kind: 'screenshot', path: screenshotPath, bytes: PNG.length, sha256: digest(PNG),
+      captured_at: '2026-08-05T04:05:06Z',
+    }],
+  });
+  await writeFile(manifestPath, json(manifest));
+
+  const url = 'attempts/001/evidence/settings/url.txt';
+  const snapshot = 'attempts/001/evidence/settings/snapshot.md';
+  await writeReviewedAttempt(runDir, {
+    outcome: 'needs_human',
+    deterministic: [
+      { id: 'settings-url', verdict: 'pass', reason: 'URL matches the approved target.', evidence: [url] },
+      { id: 'settings-ready', verdict: 'pass', reason: 'Settings content is visible.', evidence: [snapshot] },
+      {
+        id: 'profile-ready', verdict: 'needs_human',
+        reason: 'Screenshot provenance is unverified.', evidence: [screenshotPath],
+      },
+    ],
+    fresh: [{
+      id: 'settings-clarity', verdict: 'pass',
+      reason: 'The settings screen was independently reviewed.', evidence: [snapshot],
+    }],
+  });
+  return runDir;
+}
+
 export async function unverifiedFixture() {
   const runDir = await validRunFixture();
   await tamperHash(runDir);

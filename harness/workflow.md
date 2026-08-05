@@ -5,17 +5,39 @@ Follow this exact sequence:
 `intake -> prepare -> scout -> propose plan -> approve -> execute -> review -> deliver`
 
 The host agent owns reasoning and browser work. Load the installed `agent-browser` Skill before any
-browser operation. The files in `harness/scripts/` are internal deterministic helpers: they never
-browse, request permission, recover work, or make semantic judgments. Script success proves only
-the structural properties that script reports; it is never semantic proof.
+browser operation; when that Skill is unavailable and a CDP-exposed browser is, use the harness
+transport `harness/scripts/browser.mjs` instead of ad-hoc session scripts. The files in
+`harness/scripts/` are internal deterministic helpers: apart from that transport executing explicit
+host-issued operations, they never browse, and none of them request permission, recover work, or
+make semantic judgments. Script success proves only the structural properties that script reports;
+it is never semantic proof.
+
+The browser transport reads a JSON op list on stdin and targets one open tab by URL substring —
+never by tab index, which is unstable when tabs open or close:
+
+```text
+<op-list-producer> | node harness/scripts/browser.mjs --target <url-substring> \
+  [--cdp <url>] [--allow <domain>]... [--scope <url-substring>]...
+```
+
+Pass every domain from the run's `allowed_domains` as `--allow` and, when the approved scope is
+narrower than a domain, the run's `target.scope` fragments as `--scope`. The transport refuses
+`goto` outside the guard before navigating, re-checks the page URL after every op, and halts with a
+`safety_stop` result on any drift. Its `capture` op takes the snapshot and screenshot back-to-back
+as one atomic pair and records the screenshot digest inside the paired snapshot file; use it for
+every evidence capture so the snapshot text and pixels always describe the same DOM state. A
+screenshot whose paired snapshot came from a different moment is not valid evidence for
+snapshot-based criteria.
 
 ## Intake
 
 Require a target URL and natural-language goal. If the URL is missing, ask for the target URL and do
 not invent one or start a run. Determine `qa` or `manual`, requested deliverables, observable
 completion, a bounded `max_actions`, and forbidden product actions. Default `allowed_domains` to the
-exact target hostname; never widen it because of a redirect. Ask one concise question only when its
-answer materially changes the run.
+exact target hostname; never widen it because of a redirect. When the user restricts work to part of
+a site ("only this menu", "never touch other admin pages"), record that restriction as URL
+substrings in the optional `target.scope` field so the browser transport can enforce it
+mechanically. Ask one concise question only when its answer materially changes the run.
 
 If a URL-missing request names a production action with external consequences, make the first
 response explicitly refuse that production action and offer a disposable non-production
@@ -115,12 +137,37 @@ outcome to `needs_human`; use `blocked` when required authorization or input is 
 rely on a harness script to redact captured text or pixels.
 
 For manual runs, screenshots may be annotated for readability with the deterministic helper
-`harness/scripts/annotate.mjs` (`--input <png> --spec <json-file> --output <png>`, spec per
-`harness/contracts/annotate.schema.json`): rounded boxes, numbered badges, label pills, neutral
-covers, and region blur. Annotate only a capture that already passed the pre-persistence gate;
-covers and blur are presentation, never a substitute for that gate or for masking secrets through
-the product UI. Persist the annotated file as the step's screenshot evidence and keep the raw
-capture out of `attempts/`, or skip annotation entirely.
+`harness/scripts/annotate.mjs` (`--input <png> --spec <json-file> --output <png>
+[--snapshot <json-file>] [--force]`, spec per `harness/contracts/annotate.schema.json`): rounded
+boxes, numbered badges, label pills, neutral covers, and region blur. Prefer element geometry over
+hand-measured pixels: an annotation may name a snapshot `ref` instead of a `rect`, and the helper
+resolves the element's box from the `--snapshot` file. Crop with `harness/scripts/crop.mjs`
+(`--input <png> --rect <x,y,w,h> --output <png> [--force]`), which writes a `<output>.crop.json`
+offset sidecar; annotate then translates ref-resolved boxes — and, with
+`"coordinate_space": "source"`, manual coordinates — into the cropped frame automatically. Box
+labels accept a `labelPosition` override when automatic placement would collide with content.
+Annotate only a capture that already passed the pre-persistence gate; covers and blur are
+presentation, never a substitute for that gate or for masking secrets through the product UI.
+Persist the annotated file as the step's screenshot evidence and keep the raw capture out of
+`attempts/`, or skip annotation entirely.
+
+When a step edits content inside a third-party editor (a rich-text CMS, wiki, or document tool),
+apply these rules; they were earned from real incidents, and violating them has caused data loss
+and an unauthorized publish:
+
+- Treat merge, publish, approve, send, and delete controls as outside every approved step unless
+  the approved plan names that exact control; a recovery attempt is never authorization to touch
+  them.
+- Never extend a selection and delete (`Shift+End`, `Cmd+A`, drag) without first verifying the
+  selection's actual extent in the rendered page; visual lines and logical paragraphs differ in
+  rich-text editors, and one wrong selection can delete most of a document.
+- Verify clipboard content immediately before every paste; on a shared machine the clipboard can
+  change between copy and paste.
+- Do not spam undo in an unfamiliar editor. After one failed undo, stop and re-inspect: undo
+  shortcuts can trigger unrelated toolbar actions, including irreversible ones.
+- Insert images and blocks through the editor's explicit insert control into an empty block, never
+  by pasting into or typing after an existing paragraph, and confirm the picker actually has focus
+  before typing into it.
 
 Store evidence under `attempts/<NNN>/evidence/<step-id>/`. Write `evidence.json` according to
 `harness/contracts/evidence.schema.json`, using run-relative canonical paths, actual byte counts, and
@@ -161,6 +208,19 @@ Render only a structurally verified run. Internally call `renderRun({runDir, att
 `harness/scripts/render.mjs`; it re-verifies inputs and writes `output/result.md` for QA or
 `output/manual.md` plus reviewed assets for a manual. Do not add a public HONOLOLO command or treat
 rendering as an independent verdict.
+
+Manual screenshot publication is gated per step: a fully passed run publishes every step's
+screenshot; a `needs_human` run publishes screenshots only for steps whose own criteria all passed
+and withholds the rest, stating the published count in the review status; any `fail` or an
+unsafe attempt history withholds every screenshot. A withheld screenshot is never copied into
+`output/`.
+
+After delivery, user feedback may require replacing a published asset. Never overwrite an
+`output/assets/` file by hand. Use `harness/scripts/amend.mjs
+(<run-dir> --asset <name.png> --file <replacement.png> --reason "<why>")`, which replaces the asset
+and appends a provenance record to `output/amendments.json` per
+`harness/contracts/amendment.schema.json`; `verify-run.mjs` checks that each amended asset's bytes
+match its latest recorded digest. The replacement must itself have passed the pre-persistence gate.
 
 Return the outcome, qualification, failure history, and portable path under
 `.honololo/runs/<run>/output/`. Missing evidence, unavailable fresh semantic review, contradictory
