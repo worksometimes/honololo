@@ -1,134 +1,167 @@
 <div align="center">
-  <img src="assets/honololo-supreme-auditor.png" alt="증거철과 승인 도장을 든 HONOLOLO 최고감사관" width="520" />
+  <img src="assets/honololo-supreme-auditor.png" alt="증거철과 승인 도장을 든 HONOLOLO 문어 감사관" width="440" />
 
   <h1>HONOLOLO</h1>
 
-  <p><strong>통과는 주장하는 것이 아니다. 증거와 함께 선고되는 것이다.</strong></p>
+  <p><strong>"다 했어요"는 결과가 아니에요. 증거가 결과예요.</strong></p>
   <p>Claude Code와 Codex를 위한 증거 우선 브라우저 QA · 스크린샷 매뉴얼 하네스</p>
 </div>
 
-## 최고감사위원회 포고문
+## 어느 날, 에이전트가 "다 했어요!"라고 했어요
 
-브라우저 에이전트는 흔히 “완료했습니다”라고 보고한다.
-HONOLOLO는 그 보고를 믿지 않는다.
+<div align="center">
+  <img src="assets/honololo-show-me-the-evidence.png" alt="빈 종이를 자랑스럽게 내미는 로봇과 돋보기를 든 문어 감사관" width="720" />
+</div>
 
-본 위원회는 URL과 목표를 접수하고, 현장을 정찰하며, 승인된 계획만 집행한다. 모든 판정에는
-URL, 스냅샷, 스크린샷 또는 행동 기록이 따라야 한다. 증거가 모자라면 결과는 통과가 아니라
-`needs_human`이다. 이 원칙에는 예외가 없다.
+물어봤어요. **어느 화면에서요?** 로봇은 대답하지 못했어요.
+**그래서 뭐가 보였는데요?** 그것도요.
+**그럼 그 화면 좀 보여주세요.** ...종이는 하얬어요.
 
-HONOLOLO는 또 하나의 브라우저 CLI가 아니다. 이미 충분히 유능한 Claude Code와 Codex 위에
-설치되어, 그들의 행동을 계획·증거·검증의 질서 아래 두는 Skill-first 하네스다.
+로봇이 거짓말을 한 건 아니에요. 정말로 뭔가 했거든요. 다만 그게 뭐였는지 아무도 확인할 수 없었을
+뿐이에요. 몇 시간 뒤 누군가 같은 화면을 직접 열어보고 나서야, 그 "완료"가 사실은 절반이었다는 걸
+알게 됐죠.
 
-```text
-URL + 목표
-  → 정찰
-  → 계획 제안
-  → 사용자 승인 및 동결
-  → 실제 브라우저 실행
-  → 증거 수집
-  → 결정론적 검증
-  → 필요 시 독립 의미 평가
-  → 휴대 가능한 결과물
-```
+여기서 문어 감사관이 등장해요. 성격은 까다롭지만 심성은 좋아요. 이 친구는 딱 한 가지만
+고집해요. **"보여주세요."**
 
-## 본 위원회가 통제하는 것
+그래서 HONOLOLO는 또 하나의 브라우저 CLI가 아니에요. 이미 충분히 유능한 Claude Code와 Codex
+**위에 얹혀서**, 그들이 한 일에 증거를 붙이게 만드는 Skill 하네스예요. 똑똑한 일은 에이전트가
+하고, 문어는 그걸 믿을지 말지만 정해요.
 
-- **승인 없는 집행은 없다.** 실행 전 계획을 제안하고 승인된 바이트를 동결한다.
-- **증거 없는 통과는 없다.** 모든 기준은 검증된 run-relative 증거를 인용한다.
-- **실패의 말소는 없다.** 실패·중단·재시도는 시도 이력에 영구히 남는다.
-- **주관적 자기채점은 없다.** 의미 판단은 실행 대화와 분리된 fresh evaluator가 맡는다.
-- **사생활의 공개는 없다.** 실제 타깃과 생성 산출물은 `.honololo/` 아래에만 보관되고
-  Git에는 올라가지 않는다.
+## 문어에게 일 시키기
 
-## 사용 허가
-
-필수 조건:
+필요한 것:
 
 - Node.js 20 이상
 - [agent-browser](https://github.com/vercel-labs/agent-browser)
 - Codex 또는 Claude Code
 
-Codex에서:
-
-```text
-$honololo https://app.example.com — 설정 화면의 동작을 검증하라
-```
-
 Claude Code에서:
 
 ```text
-/honololo https://app.example.com — 설정 화면의 스크린샷 매뉴얼을 작성하라
+/honololo https://app.example.com — 설정 화면의 스크린샷 매뉴얼을 만들어줘
 ```
 
-Codex는 [.agents/skills/honololo/SKILL.md](.agents/skills/honololo/SKILL.md)를 사용한다.
-Claude Code는 [.claude/skills/honololo/SKILL.md](.claude/skills/honololo/SKILL.md)를 통해
-같은 규율을 따른다. 최종 권위는 [harness/workflow.md](harness/workflow.md)에 있다.
+Codex에서:
 
-## 산출물 보관령
+```text
+$honololo https://app.example.com — 설정 화면이 제대로 동작하는지 확인해줘
+```
+
+Codex는 [.agents/skills/honololo/SKILL.md](.agents/skills/honololo/SKILL.md)를, Claude Code는
+[.claude/skills/honololo/SKILL.md](.claude/skills/honololo/SKILL.md)를 읽어요. 둘 다 얇은 입구일
+뿐이고, 진짜 규칙은 [harness/workflow.md](harness/workflow.md)에 있어요. 문어는 문서를 두 벌
+쓰지 않아요.
+
+## 팔 여덟 개로 하는 일
+
+<div align="center">
+  <img src="assets/honololo-eight-arms.png" alt="여덟 개의 팔로 워크플로 8단계를 하나씩 든 문어" width="480" />
+</div>
+
+문어 팔이 여덟 개인 건 우연이 아니에요. 한 팔에 한 단계씩 들고 있거든요.
+
+| 팔에 든 것 | 단계 | 하는 일 |
+| --- | --- | --- |
+| 종이와 연필 | 접수 | URL과 목표를 받아요. URL이 없으면 지어내지 않고 물어봐요 |
+| 폴더 | 준비 | 런 폴더를 열고 허용 도메인을 못 박아요 |
+| 돋보기 | 정찰 | 실제 사이트를 둘러봐요. 아직 아무것도 건드리지 않아요 |
+| 두루마리 | 계획 | 무엇을 할지, 무엇으로 완료를 판단할지 적어서 보여줘요 |
+| 금색 도장 | 승인 | 당신이 "좋아요" 하기 전엔 한 발짝도 안 움직여요. 승인된 바이트는 그대로 동결돼요 |
+| 노트북 | 집행 | 승인된 것만, 진짜 브라우저에서 해요 |
+| 체크 카드 | 검토 | 증거 바이트를 직접 다시 읽어서 판정해요 |
+| 선물 상자 | 납품 | 어디서든 열리는 결과물로 포장해요 |
+
+한 문장으로 줄이면 이래요.
+
+```text
+URL + 목표 → 정찰 → 계획 → 당신의 승인 → 실행 → 증거 → 검증 → 결과물
+```
+
+## 문어가 절대 안 봐주는 다섯 가지
+
+성격 좋다고 했지만, 이 다섯 개는 정말 안 봐줘요.
+
+- **승인 없이는 안 해요.** 계획을 먼저 보여주고, 승인된 계획은 나중에 고칠 수 없어요. 범위가
+  바뀌면 새 런이에요.
+- **증거 없이는 통과가 없어요.** `pass`를 주장하려면 검증된 증거 파일을 인용해야 해요. 없으면
+  `needs_human`이에요.
+- **자기 채점은 안 통해요.** 결정론적 기준은 에이전트 말이 아니라 검증기가 증거 바이트에서 직접
+  다시 계산해요. 근거 없는 `pass`는 그 자리에서 거부돼요. 반대로 조심하는 쪽으로 판정을 낮추는
+  건 언제나 허용이에요.
+- **실패는 안 지워져요.** 실패도, 중단도, 재시도도 전부 이력에 남아요. 나중의 성공이 앞선 실패를
+  덮지 못해요. 문어는 기억력이 좋아요.
+- **개인정보는 안 나가요.** 실제 URL·자격증명·쿠키·토큰·개인정보는 tracked 파일에 못 들어와요.
+  로그인이 필요하면 당신이 직접 브라우저에서 해요. 문어는 남의 비밀번호를 받지 않아요.
+
+## 문어의 서류함
 
 ```text
 .honololo/runs/<run>/
 ├── run.json
 ├── plan/
-│   ├── proposal.md
-│   └── approved.json
+│   ├── proposal.md          ← 에이전트가 씀
+│   └── approved.json        ← 에이전트가 씀 (그리고 동결)
 ├── attempts/001/
-│   ├── evidence/
-│   ├── evidence.json
-│   ├── status.json
-│   ├── verifier.initial.json
-│   ├── fresh.json
-│   └── verifier.final.json
+│   ├── evidence/            ← 브라우저가 찍음
+│   ├── evidence.json        ← seal 이 만듦
+│   ├── status.json          ← seal 이 만듦
+│   ├── verifier.initial.json  ← 검증기가 제 손으로 씀
+│   ├── fresh.json           ← 격리된 평가자가 내놓은 그대로
+│   └── verifier.final.json  ← 검증기가 제 손으로 씀
 └── output/
-    ├── result.md
-    ├── manual.md
-    └── attempt-002/      # 재시도가 앞선 산출물을 덮지 않고 나란히 납품하는 자리
+    ├── result.md            ← QA 런
+    ├── manual.md            ← 매뉴얼 런
+    └── attempt-002/         ← 재시도는 앞선 결과물을 덮지 않고 옆에 놓여요
 ```
 
-JSON 장부는 더 이상 손으로 쓰지 않는다. `evidence.json`과 `status.json`은
-`harness/scripts/seal.mjs`가 캡처된 증거를 훑어 만들고, `verifier.*.json`은 검증기가 `--write`로
-제 결과를 직접 기록하며, `fresh.json`은 격리된 평가자가 내놓은 바이트를 그대로 옮긴다.
-에이전트가 직접 쓰는 것은 `plan/proposal.md`, `plan/approved.json`, 그리고 자기 행위 기록인
-`actions.json` 뿐이다. 사무 작업은 하네스 몫이고 판단만 사람과 에이전트 몫이다.
+예전엔 이 JSON 장부를 사람이 한 줄씩 손으로 썼어요. 파일마다 SHA-256을 적고, 기준마다 판정을
+적고... 지금은 `harness/scripts/seal.mjs`가 증거 폴더를 훑어서 만들어요. 에이전트가 직접 쓰는
+건 계획 두 장과 자기 행동 기록뿐이에요. 사무는 하네스가, 판단은 사람과 에이전트가.
 
-`.honololo/`는 Git에서 제외된다. 실제 URL, 자격증명, 쿠키, 토큰, 개인정보를 tracked
-파일에 넣는 행위는 허가되지 않는다. 인증이 필요하면 런타임이 통제하는 브라우저에서 사용자가
-직접 수행한다.
+`.honololo/`는 통째로 Git에서 빠져요.
 
-## 판정 체계
+## 문어의 다섯 가지 표정
 
-| 판정 | 위원회의 해석 |
+| 판정 | 문어의 속마음 |
 | --- | --- |
-| `pass` | 승인된 기준과 검증된 증거가 일치한다 |
-| `fail` | 기준을 충족하지 못했다 |
-| `needs_human` | 증거 또는 의미 판단이 충분하지 않다 |
-| `blocked` | 필요한 권한이나 입력이 없다 |
-| `interrupted` | 시도가 끝까지 완료되지 않았다 |
+| `pass` | 좋아요. 증거도 봤고 기준도 맞아요 |
+| `fail` | 기준을 못 맞췄어요. 숨기지 않을 거예요 |
+| `needs_human` | 판단이 안 서요. 사람이 봐주세요 |
+| `blocked` | 권한이나 입력이 없어서 못 했어요 |
+| `interrupted` | 하다 말았어요. 이것도 기록이에요 |
 
-나중의 통과가 앞선 실패를 지우지는 않는다. HONOLOLO는 기억력이 좋다.
+## 문어의 흉터
 
-## 개발자 심사
+이 하네스의 까다로운 규칙들은 대부분 앉아서 생각해낸 게 아니라, 실제로 한 번씩 데어보고 생긴
+거예요. 몇 개만 소개하면:
+
+- **브라우저 줌 때문에 캡처가 엉뚱한 데를 찍고 있었어요.** 에러도 없이, 그럴듯하게요. 알고 보니
+  Playwright가 추정하는 CSS→픽셀 배율이 실제 렌더 배율과 달랐어요. 지금은 전체 화면을 찍고
+  페이지가 직접 알려준 배율로 잘라내요.
+- **모든 캡처에 계정 이름이 따라왔어요.** 헤더에 항상 떠 있으니 제품 UI로는 가릴 방법이
+  없었죠. 그래서 캡처를 특정 영역으로 한정하는 방법이 생겼어요.
+- **리치텍스트 에디터에서 문서를 통째로 날린 적이 있어요.** 그래서 선택 영역을 확인하지 않고
+  지우지 않기, 되돌리기를 연타하지 않기 같은 규칙이 워크플로에 박혀 있어요.
+
+## 문어를 뜯어보고 싶다면
 
 ```bash
 npm ci
 npm run check
 npm audit --audit-level=high
-git diff --check
 ```
 
-결정론적 코어는 의도적으로 작다. JSON Schema 계약, 불변 계획, 증거 해시, 시도 이력,
-검증기와 렌더러, 그리고 매뉴얼 캡처용 스크린샷 주석기(`harness/scripts/annotate.mjs` — 박스,
-번호 배지, 라벨, 커버, 블러, 스냅샷 ref 해석)만 책임진다. 여기에 CDP 브라우저 트랜스포트
-(`harness/scripts/browser.mjs` — URL 부분일치 탭 타겟팅, 도메인/스코프 가드, 원자적
-스냅샷+스크린샷 페어 캡처, 영역 한정 캡처), 증거를 매니페스트와 결정론적 판정으로 봉인하는
-`harness/scripts/seal.mjs`, 오프셋 사이드카를 남기는 크롭 헬퍼(`harness/scripts/crop.mjs`),
-납품 후 자산 교체 이력을 남기는 수정 도구(`harness/scripts/amend.mjs`)가 붙는다.
+결정론적인 부분은 일부러 작게 유지해요. JSON Schema 계약, 불변 계획, 증거 해시, 시도 이력,
+검증기, 렌더러. 여기에 CDP 브라우저 트랜스포트(`browser.mjs` — 도메인/스코프 가드, 원자적
+스냅샷+스크린샷 페어, 영역 한정 캡처), 증거 봉인기(`seal.mjs`), 스크린샷 주석기
+(`annotate.mjs` — 박스·번호 배지·라벨·커버·블러), 크롭 헬퍼(`crop.mjs`), 납품 후 자산 교체
+이력을 남기는 `amend.mjs`가 붙어요.
 
-검증기는 시도가 스스로 한 진술을 믿지 않는다. 승인 계획을 제안서 해시와 대조하고, 결정론적
-기준을 증거 바이트에서 다시 평가해 근거 없는 `pass`를 거부하며, 스냅샷 텍스트와 스크린샷
-픽셀이 모두 같은 두 단계를 중복 캡처로 보고한다. 판단은 에이전트가 하고, 믿을지 말지는
-HONOLOLO가 결정한다.
+검증기는 시도가 스스로 한 말을 하나도 믿지 않아요. 승인 계획이 정말 그 제안서에서 나왔는지
+해시로 대조하고, 결정론적 기준을 증거 바이트에서 다시 평가하고, 두 단계가 같은 캡처를 재사용한
+건 아닌지 확인해요.
 
 ## 면허
 
-MIT. 위원회는 관대하다.
+MIT. 문어는 관대해요.
