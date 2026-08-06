@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honololo.local/contracts/recipe.schema.json",
+  "title": "HONOLOLO replay recipe",
+  "type": "object",
+  "required": ["schema_version", "slug", "host", "goal", "request", "plan", "steps", "source"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "1"},
+    "slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+    "host": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"},
+    "goal": {"type": "string", "minLength": 1},
+    "request": {"type": "object"},
+    "plan": {"type": "object"},
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "ops"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+          "ops": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["op"],
+              "properties": {"op": {"type": "string", "minLength": 1}}
+            }
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["run", "attempt", "plan_sha256", "extracted_at"],
+      "additionalProperties": false,
+      "properties": {
+        "run": {"type": "string", "minLength": 1},
+        "attempt": {"type": "integer", "minimum": 1},
+        "plan_sha256": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "extracted_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

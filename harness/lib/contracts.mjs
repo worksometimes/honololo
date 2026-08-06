@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 
-const names = ['run', 'plan', 'evidence', 'review', 'annotate', 'amendment'];
+const names = ['run', 'plan', 'evidence', 'review', 'annotate', 'amendment', 'recipe'];
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
 const validators = new Map(names.map((name) => {
