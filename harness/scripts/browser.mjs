@@ -7,6 +7,7 @@ import sharp from 'sharp';
 import { formatResults } from '../lib/browser-report.mjs';
 import { checkGuard, parseDriverArguments } from '../lib/browser-guard.mjs';
 import { settle } from '../lib/settle.mjs';
+import { appendTelemetry, buildTelemetryRecord } from '../lib/telemetry.mjs';
 
 const SNAPSHOT_JS = String.raw`
 (within) => {
@@ -349,6 +350,26 @@ export async function inspectNewTabs(context, known, guard) {
   return { opened, violation: null };
 }
 
+// Timing lives here rather than in each op so an error costs a timed record too: the slow failure
+// is exactly the line a telemetry reader needs.
+export async function timedOp(page, command, guard) {
+  const startedAt = Date.now();
+  try {
+    const result = await runOp(page, command, guard);
+    return { result: { ...result, ms: Date.now() - startedAt }, failed: false };
+  } catch (error) {
+    return {
+      result: {
+        op: command.op,
+        error: `${error?.message ?? error}`.slice(0, 400),
+        url: page.url(),
+        ms: Date.now() - startedAt,
+      },
+      failed: true,
+    };
+  }
+}
+
 export async function runOps({ cdp, target, allow, scope, commands }) {
   const guard = { allow, scope };
   const results = [];
@@ -365,16 +386,9 @@ export async function runOps({ cdp, target, allow, scope, commands }) {
     }
     const known = new Set(context.pages());
     for (const command of commands) {
-      try {
-        results.push(await runOp(page, command, guard));
-      } catch (error) {
-        results.push({
-          op: command.op,
-          error: `${error?.message ?? error}`.slice(0, 400),
-          url: page.url(),
-        });
-        break;
-      }
+      const { result, failed } = await timedOp(page, command, guard);
+      results.push(result);
+      if (failed) break;
       const tabs = await inspectNewTabs(context, known, guard);
       if (tabs.opened.length > 0) results.push({ op: 'new_tab', urls: tabs.opened.join(' ') });
       if (tabs.violation) {
@@ -407,7 +421,17 @@ async function main(argv) {
     throw error;
   }
   if (!Array.isArray(commands)) throw driverError('HONOLOLO_BROWSER_STDIN_INVALID');
+  const startedAt = new Date();
   const results = await runOps({ ...options, commands });
+  if (options.telemetry !== null) {
+    await appendTelemetry(options.telemetry, buildTelemetryRecord({
+      stage: options.stage,
+      target: options.target,
+      results,
+      startedAt: startedAt.toISOString(),
+      wallMs: Date.now() - startedAt.getTime(),
+    }));
+  }
   process.stdout.write(options.json ? `${JSON.stringify(results)}\n` : formatResults(results));
 }
 

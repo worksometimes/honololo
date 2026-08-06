@@ -60,3 +60,14 @@ test('parseDriverArguments requires target and collects repeatable flags', () =>
   );
   assert.throws(() => parseDriverArguments(['--target']), /HONOLOLO_BROWSER_USAGE/u);
 });
+
+test('telemetry and stage are optional value flags', () => {
+  const options = parseDriverArguments([
+    '--target', 'app', '--telemetry', 'run/telemetry.jsonl', '--stage', 'execute',
+  ]);
+  assert.equal(options.telemetry, 'run/telemetry.jsonl');
+  assert.equal(options.stage, 'execute');
+  const bare = parseDriverArguments(['--target', 'app']);
+  assert.equal(bare.telemetry, null);
+  assert.equal(bare.stage, null);
+});

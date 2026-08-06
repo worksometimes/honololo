@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { SETTLE_BUDGETS, settle, settleBudget } from '../../harness/lib/settle.mjs';
-import { inspectNewTabs, runOp } from '../../harness/scripts/browser.mjs';
+import { inspectNewTabs, runOp, timedOp } from '../../harness/scripts/browser.mjs';
 
 // A page stub records what the driver asked for. Nothing here needs a real browser: the properties
 // under test are which wait each op chooses and what it reports, not how Chrome renders.
@@ -180,6 +180,30 @@ test('snapshot persists on its own, with no screenshot and no pairing claim', as
   assert.equal(persisted.text, 'Ready');
   assert.equal(persisted.paired_sha256, undefined);
   assert.equal(persisted.paired_screenshot, undefined);
+});
+
+test('timedOp stamps how long the op took and preserves its result', async () => {
+  const page = fakePage();
+  const { result, failed } = await timedOp(
+    page, { op: 'click', ref: 'e1' }, { allow: [], scope: [] },
+  );
+  assert.equal(failed, false);
+  assert.equal(result.op, 'click');
+  assert.equal(result.ref, 'e1');
+  assert.equal(Number.isSafeInteger(result.ms), true);
+});
+
+test('a failed op becomes a timed error record that ends the batch', async () => {
+  const page = fakePage({
+    overrides: { waitForSelector: () => Promise.reject(new Error('Timeout 500ms exceeded')) },
+  });
+  const { result, failed } = await timedOp(
+    page, { op: 'wait_for', selector: '#never', timeout: 500 }, { allow: [], scope: [] },
+  );
+  assert.equal(failed, true);
+  assert.match(result.error, /HONOLOLO_BROWSER_WAIT_TIMEOUT/u);
+  assert.equal(result.url, 'https://app.example.com/');
+  assert.equal(Number.isSafeInteger(result.ms), true);
 });
 
 test('a tab opened outside the guard stops the batch', async () => {

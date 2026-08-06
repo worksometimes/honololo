@@ -41,7 +41,10 @@ export function checkGuard(url, { allow = [], scope = [] } = {}) {
 }
 
 export function parseDriverArguments(argv) {
-  const options = { cdp: 'http://127.0.0.1:9222', target: null, allow: [], scope: [], json: false };
+  const options = {
+    cdp: 'http://127.0.0.1:9222', target: null, allow: [], scope: [],
+    telemetry: null, stage: null, json: false,
+  };
   let index = 0;
   while (index < argv.length) {
     const flag = argv[index];
@@ -58,13 +61,16 @@ export function parseDriverArguments(argv) {
     else if (flag === '--target') options.target = value;
     else if (flag === '--allow') options.allow.push(value);
     else if (flag === '--scope') options.scope.push(value);
+    else if (flag === '--telemetry') options.telemetry = value;
+    else if (flag === '--stage') options.stage = value;
     else throw guardError('HONOLOLO_BROWSER_USAGE', String(flag));
     index += 2;
   }
   if (options.target === null) {
     throw guardError(
       'HONOLOLO_BROWSER_USAGE',
-      '--target <url-substring> [--cdp <url>] [--allow <domain>]... [--scope <url-substring>]... [--json]',
+      '--target <url-substring> [--cdp <url>] [--allow <domain>]... [--scope <url-substring>]... ' +
+        '[--telemetry <file> --stage <stage>] [--json]',
     );
   }
   parseGuard(options);
