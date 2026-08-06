@@ -65,8 +65,38 @@ function markdownText(value) {
     .replace(/([`*_[\]<>|])/gu, '\\$1');
 }
 
+// Manual prose is written by the operator into the approved plan, and a reader needs the product's
+// own control names to stand out — pressing "＋" is not the same instruction as pressing plus. Bold
+// is the one exception to the escaping above, and only in its narrowest form: the span may not
+// contain a newline or any other markup character, so it can never become a link, an image, a
+// table, raw HTML, or a code span. Everything outside the span is escaped exactly as before.
+const BOLD_SPAN = /\*\*([^*\n`[\]<>|\\]{1,80})\*\*/gu;
+
+export function manualText(value) {
+  const source = String(value);
+  let out = '';
+  let index = 0;
+  for (const match of source.matchAll(BOLD_SPAN)) {
+    out += markdownText(source.slice(index, match.index));
+    out += `**${markdownText(match[1])}**`;
+    index = match.index + match[0].length;
+  }
+  return out + markdownText(source.slice(index));
+}
+
+// A template line whose every placeholder came back empty is dropped whole, label and all. A manual
+// that prints "Caution: None." under each step is noise a reader learns to skip; the sections a step
+// does not have should simply not be there.
 function fillTemplate(template, values) {
-  return template.replace(/\{\{([a-z_]+)\}\}/gu, (_, key) => values[key] ?? '');
+  const resolve = (key) => values[key] ?? '';
+  return template.split('\n').filter((line) => {
+    const keys = [...line.matchAll(/\{\{([a-z_]+)\}\}/gu)].map(([, key]) => key);
+    return keys.length === 0 || keys.some((key) => resolve(key) !== '');
+  }).join('\n')
+    .replace(/\{\{([a-z_]+)\}\}/gu, (_, key) => resolve(key))
+    // The template spaces its sections for the case where every one of them is present. Dropping a
+    // section leaves the blank lines that framed it behind, and a reader sees the gap, not the rule.
+    .replace(/\n{3,}/gu, '\n\n');
 }
 
 // A run may ship its own presentation under `<run-dir>/templates/`: section order, labels, and
@@ -255,44 +285,97 @@ async function screenshotAsset(runDir, step, file, index) {
   return { name: `${String(index).padStart(3, '0')}-${step.id}.png`, bytes };
 }
 
-function stepPublishGate(criteria, aggregate, requiresHumanReview) {
-  const globalBlocked = requiresHumanReview || aggregate.outcome === 'fail';
-  const blockedSteps = new Set();
+// A step publishes its screenshot when its own criteria all passed and its own history is
+// uncontested. A `fail` anywhere still withholds everything: a run with a failing step is not a
+// document to hand to a reader, whichever step failed.
+function stepPublishGate(criteria, aggregate, contestedSteps) {
+  const blockedSteps = new Set(contestedSteps);
   for (const criterion of criteria) {
     if (criterion.verdict !== 'pass') blockedSteps.add(criterion.step.id);
   }
-  return (step) => !globalBlocked && !blockedSteps.has(step.id);
+  return (step) => aggregate.outcome !== 'fail' && !blockedSteps.has(step.id);
 }
 
-async function manualSteps(runDir, plan, files, publishStep, stepTemplate) {
+function numbered(items) {
+  return items.map((item, index) => `${index + 1}. ${item}`).join('\n');
+}
+
+function calloutBlock(items, marker) {
+  return items.map((item) => `> ${marker} ${manualText(item)}`).join('\n>\n');
+}
+
+// A step's ordered actions, or — when the step is a single move — the one sentence that says it.
+// A numbered list of one reads like a form; a paragraph of six reads like a wall.
+function actionBlock(manual) {
+  return Array.isArray(manual.actions) && manual.actions.length > 0
+    ? numbered(manual.actions.map(manualText))
+    : manualText(manual.instruction ?? '');
+}
+
+// Carries its own leading break so the template can keep the section's label on the placeholder's
+// line. A label that outlives its content is exactly the empty scaffolding the drop rule exists to
+// remove, and a list cannot share a line with the words introducing it.
+function checkpointBlock(manual) {
+  const checkpoints = manual.checkpoints ?? [];
+  if (checkpoints.length === 0) return '';
+  return `\n\n${numbered(checkpoints.map(
+    ({ label, detail }) => `**${markdownText(label)}** — ${manualText(detail)}`,
+  ))}`;
+}
+
+function exampleBlock(manual) {
+  if (!manual.example) return '';
+  return `> ${manualText(manual.example.ask)}\n\n${manualText(manual.example.result)}`;
+}
+
+async function manualSteps(runDir, plan, files, publishStep, templates) {
   const screenshots = new Map(files
     .filter((file) => file.kind === 'screenshot')
     .map((file) => [file.step_id, file]));
-  const rendered = [];
+  const blocks = [];
   const assets = [];
   let published = 0;
+  let total = 0;
+  let section = null;
+
   for (const step of plan.steps.filter(({ manual }) => manual)) {
-    const index = rendered.length + 1;
-    let image = 'Unpublished pending review.';
+    const manual = step.manual;
+    // Consecutive steps sharing a section name become one chapter of the document, so a reader
+    // meets a task rather than a numbered run of unrelated screens.
+    if (manual.section !== undefined && manual.section !== section) {
+      section = manual.section;
+      blocks.push(fillTemplate(templates.section, {
+        section: markdownText(section),
+      }).trim());
+    }
+    total += 1;
+    let image = '';
+    let withheld = '';
     if (publishStep(step)) {
-      const asset = await screenshotAsset(runDir, step, screenshots.get(step.id), index);
+      const asset = await screenshotAsset(runDir, step, screenshots.get(step.id), total);
       assets.push(asset);
       image = `![${markdownText(imageAlt(step))}](assets/${asset.name})`;
       published += 1;
-    }
-    rendered.push(fillTemplate(stepTemplate, {
-      index: String(index),
-      title: markdownText(step.manual.title),
-      instruction: markdownText(step.manual.instruction),
-      expected: markdownText(step.manual.expected),
+    } else withheld = 'Unpublished pending review.';
+
+    blocks.push(fillTemplate(templates.step, {
+      index: String(total),
+      title: markdownText(manual.title),
+      intro: manual.intro === undefined ? '' : manualText(manual.intro),
+      actions: actionBlock(manual),
+      // Kept so a run-local template written against the single-sentence shape still renders.
+      instruction: manualText(manual.instruction ?? ''),
       image,
-      cautions: step.manual.cautions.length === 0
-        ? 'None.'
-        : step.manual.cautions.map(markdownText).join('; '),
+      image_withheld: withheld,
+      checkpoints: checkpointBlock(manual),
+      example: exampleBlock(manual),
+      expected: manualText(manual.expected),
+      tips: calloutBlock(manual.tips ?? [], '💡'),
+      cautions: calloutBlock(manual.cautions, '🔒'),
     }).trimEnd());
   }
-  if (rendered.length === 0) throw renderError('MANUAL_STEPS_MISSING');
-  return { markdown: rendered.join('\n\n'), assets, published, total: rendered.length };
+  if (total === 0) throw renderError('MANUAL_STEPS_MISSING');
+  return { markdown: blocks.join('\n\n'), assets, published, total };
 }
 
 async function preflightDirectory(path, label) {
@@ -407,11 +490,23 @@ export async function renderRun({ runDir, attempt, type } = {}) {
 
   const manual = await manualSteps(
     runDir, plan, verified.files,
-    stepPublishGate(criteria, aggregate, verified.requires_human_review),
-    await loadTemplate(runDir, 'manual.step'),
+    stepPublishGate(criteria, aggregate, verified.contested_steps),
+    {
+      step: await loadTemplate(runDir, 'manual.step'),
+      section: await loadTemplate(runDir, 'manual.section'),
+    },
   );
+  const document = plan.document;
   return publishOutput(runDir, outputRoot, 'manual.md', fillTemplate(template, {
     run_id: markdownText(verified.run_id),
+    // Exactly one of these carries the title: a plan that wrote a document names it, and one that
+    // did not falls back to the run. Both lines are placeholder-only, so the unused one is dropped.
+    document_title: document ? markdownText(document.title) : '',
+    fallback_title: document ? '' : markdownText(verified.run_id),
+    overview: document ? manualText(document.overview) : '',
+    prerequisites: document?.prerequisites?.length
+      ? `\n\n${document.prerequisites.map((item) => `- ${manualText(item)}`).join('\n')}`
+      : '',
     scope,
     environment: environment(run, verified.attempt),
     review_status: manualReviewStatus(

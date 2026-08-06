@@ -6,6 +6,7 @@ import { chromium } from 'playwright-core';
 import sharp from 'sharp';
 import { formatResults } from '../lib/browser-report.mjs';
 import { checkGuard, parseDriverArguments } from '../lib/browser-guard.mjs';
+import { settle } from '../lib/settle.mjs';
 
 const SNAPSHOT_JS = String.raw`
 (within) => {
@@ -175,49 +176,113 @@ async function screenshotBytes(page, command) {
   return { bytes: await page.screenshot(options), region: null };
 }
 
-async function runOp(page, command, guard) {
+// Waits for a named condition instead of guessing a duration. `optional` reports a miss and lets the
+// op list continue; without it a missed condition stops the batch, which is the right default — the
+// steps after an unmet precondition would act on a page that never arrived.
+async function waitFor(page, command) {
+  const timeout = command.timeout ?? 10000;
+  const gone = command.gone === true;
+  const started = Date.now();
+  const selector = typeof command.selector === 'string' ? command.selector : '';
+  const text = typeof command.text === 'string' ? command.text : '';
+  if (selector === '' && text === '') {
+    throw driverError('HONOLOLO_BROWSER_USAGE', 'wait_for needs a selector or text');
+  }
+  try {
+    if (selector !== '') {
+      await page.waitForSelector(selector, { state: gone ? 'hidden' : 'visible', timeout });
+    } else {
+      await page.waitForFunction(
+        ([needle, absent]) => ((document.body?.innerText ?? '').includes(needle) !== absent),
+        [text, gone],
+        { timeout, polling: 100 },
+      );
+    }
+  } catch (error) {
+    if (command.optional === true) {
+      return { matched: false, waited_ms: Date.now() - started };
+    }
+    throw driverError(
+      'HONOLOLO_BROWSER_WAIT_TIMEOUT',
+      `${selector !== '' ? selector : JSON.stringify(text)} after ${timeout}ms`,
+    );
+  }
+  return { matched: true, waited_ms: Date.now() - started };
+}
+
+export async function runOp(page, command, guard) {
   const op = command.op;
   if (op === 'goto') {
     const violation = checkGuard(command.url, guard);
     if (violation) return { op, refused: true, ...violation };
     await page.goto(command.url, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(command.ms ?? 2500);
-    return { op, url: page.url() };
+    const settled = await settle(page, 'goto', command.ms);
+    return { op, url: page.url(), settled_ms: settled.waited_ms };
   }
   if (op === 'snapshot') {
-    await page.waitForTimeout(command.ms ?? 400);
+    const settled = await settle(page, 'snapshot', command.ms);
     const snapshot = await takeSnapshot(page, command.within);
-    return { op, ...snapshot };
+    // Persisting a snapshot without a screenshot is the cheap path for a step whose criteria are all
+    // textual: no PNG encode, and no pixels for the operator to inspect before the capture is saved.
+    // A step that declares screenshot evidence must use `capture`, which pairs the two atomically.
+    if (typeof command.path_prefix === 'string' && command.path_prefix !== '') {
+      const snapshotPath = `${command.path_prefix}.snapshot.json`;
+      await writeExclusive(
+        snapshotPath, Buffer.from(`${JSON.stringify(snapshot, null, 2)}\n`, 'utf8'),
+      );
+      return { op, snapshot: snapshotPath, ...snapshot, settled_ms: settled.waited_ms };
+    }
+    return { op, ...snapshot, settled_ms: settled.waited_ms };
   }
   if (op === 'click') {
     await locate(page, command.ref).click({ timeout: command.timeout ?? 10000 });
-    await page.waitForTimeout(command.ms ?? 1500);
-    return { op, ref: command.ref, url: page.url() };
+    const settled = await settle(page, 'click', command.ms);
+    return { op, ref: command.ref, url: page.url(), settled_ms: settled.waited_ms };
+  }
+  if (op === 'hover') {
+    await locate(page, command.ref).hover({ timeout: command.timeout ?? 10000 });
+    const settled = await settle(page, 'hover', command.ms);
+    return { op, ref: command.ref, settled_ms: settled.waited_ms };
+  }
+  if (op === 'select') {
+    const target = typeof command.label === 'string'
+      ? { label: command.label }
+      : { value: command.value };
+    const selected = await locate(page, command.ref)
+      .selectOption(target, { timeout: command.timeout ?? 10000 });
+    const settled = await settle(page, 'select', command.ms);
+    return { op, ref: command.ref, selected: selected.join(','), settled_ms: settled.waited_ms };
   }
   if (op === 'type') {
     const element = locate(page, command.ref);
     await element.click({ timeout: 10000 });
     await element.type(command.text, { delay: 20 });
-    await page.waitForTimeout(command.ms ?? 500);
+    const settled = await settle(page, 'type', command.ms);
     return {
       op, ref: command.ref,
       chars: command.text.length,
+      settled_ms: settled.waited_ms,
       ...(command.redact === true ? { text: '[REDACTED_INPUT]' } : {}),
     };
   }
   if (op === 'press') {
     await page.keyboard.press(command.key);
-    await page.waitForTimeout(command.ms ?? 1500);
-    return { op, key: command.key, url: page.url() };
+    const settled = await settle(page, 'press', command.ms);
+    return { op, key: command.key, url: page.url(), settled_ms: settled.waited_ms };
   }
   if (op === 'scroll') {
     if (command.at) {
+      // Some scroll containers only accept wheel events once hover has registered on them, so this
+      // one short pause stays a pause: there is no document change to settle on.
       await page.mouse.move(command.at[0], command.at[1]);
-      await page.waitForTimeout(150);
+      await page.waitForTimeout(100);
     }
     await page.mouse.wheel(0, command.dy ?? 600);
-    await page.waitForTimeout(command.ms ?? 600);
-    return { op, dy: command.dy ?? 600 };
+    const settled = await settle(page, 'scroll', command.ms);
+    return { op, dy: command.dy ?? 600, settled_ms: settled.waited_ms };
+  }
+  if (op === 'wait_for') {
+    return { op, ...(await waitFor(page, command)) };
   }
   if (op === 'wait') {
     await page.waitForTimeout(command.ms ?? 1000);
@@ -233,7 +298,7 @@ async function runOp(page, command, guard) {
     if (typeof prefix !== 'string' || prefix === '') {
       throw driverError('HONOLOLO_BROWSER_USAGE', 'capture.path_prefix');
     }
-    await page.waitForTimeout(command.ms ?? 400);
+    const settled = await settle(page, 'capture', command.ms);
     const snapshot = await takeSnapshot(page, command.within);
     const { bytes: imageBytes, region } = await screenshotBytes(page, command);
     const screenshotPath = `${prefix}.png`;
@@ -256,9 +321,32 @@ async function runOp(page, command, guard) {
       title: snapshot.title,
       elements: snapshot.elements,
       text: snapshot.text,
+      settled_ms: settled.waited_ms,
     };
   }
   throw driverError('HONOLOLO_BROWSER_OP_UNKNOWN', String(op));
+}
+
+// A control with `target="_blank"` moves the flow to a tab this driver never looks at. Without this
+// the batch keeps snapshotting the original page, and the agent reads an unchanged document as
+// "the click did nothing" instead of "the page it opened is somewhere else". Reporting the tab is
+// enough to redirect the next invocation; a tab outside the guard stops the batch like any drift.
+export async function inspectNewTabs(context, known, guard) {
+  const opened = [];
+  for (const candidate of context.pages()) {
+    if (known.has(candidate)) continue;
+    known.add(candidate);
+    try {
+      await candidate.waitForLoadState('domcontentloaded', { timeout: 3000 });
+    } catch {
+      // A tab still loading reports whichever URL it already has, which is what the guard needs.
+    }
+    const url = candidate.url();
+    opened.push(url);
+    const violation = checkGuard(url, guard);
+    if (violation) return { opened, violation };
+  }
+  return { opened, violation: null };
 }
 
 export async function runOps({ cdp, target, allow, scope, commands }) {
@@ -275,6 +363,7 @@ export async function runOps({ cdp, target, allow, scope, commands }) {
       results.push({ op: 'safety_stop', ...initial });
       return results;
     }
+    const known = new Set(context.pages());
     for (const command of commands) {
       try {
         results.push(await runOp(page, command, guard));
@@ -284,6 +373,12 @@ export async function runOps({ cdp, target, allow, scope, commands }) {
           error: `${error?.message ?? error}`.slice(0, 400),
           url: page.url(),
         });
+        break;
+      }
+      const tabs = await inspectNewTabs(context, known, guard);
+      if (tabs.opened.length > 0) results.push({ op: 'new_tab', urls: tabs.opened.join(' ') });
+      if (tabs.violation) {
+        results.push({ op: 'safety_stop', ...tabs.violation });
         break;
       }
       const violation = checkGuard(page.url(), guard);

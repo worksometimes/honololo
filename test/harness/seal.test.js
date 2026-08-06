@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { evaluateCriterion, snapshotHaystack, weakerThanEvidence } from '../../harness/lib/criteria.mjs';
 import { sealAttempt } from '../../harness/scripts/seal.mjs';
 import { verifyRun } from '../../harness/scripts/verify-run.mjs';
-import { sealableFixture } from './helpers.mjs';
+import { fixtureWithWithheldStep, sealableFixture, writeStepUrl } from './helpers.mjs';
 
 const sealScript = fileURLToPath(new URL('../../harness/scripts/seal.mjs', import.meta.url));
 
@@ -219,7 +219,8 @@ test('direct invocation prints one summary record', async () => {
   assert.equal(child.stderr, '');
   const summary = JSON.parse(child.stdout);
   assert.deepEqual(summary, {
-    sealed: 'attempts/001', steps: 1, files: 2, outcome: 'pass', verdicts: { pass: 2 },
+    sealed: 'attempts/001', steps: 1, inherited: 0, files: 2, outcome: 'pass',
+    verdicts: { pass: 2 },
   });
 });
 
@@ -253,4 +254,73 @@ test('withholding cannot soften a criterion the evidence deterministically fails
   assert.match(criterion.reason, /withheld by operator: operator judgment/u);
   assert.equal(status.outcome, 'fail');
   assert.equal((await verifyRun({ runDir })).ok, true);
+});
+
+test('carries an earlier attempt\'s settled step forward and re-captures only what changed', async () => {
+  const runDir = await fixtureWithWithheldStep();
+  await writeStepUrl(runDir, 2, 'settings');
+  const { evidence, status } = await sealAttempt({ runDir, attempt: 2, inheritFrom: 1 });
+
+  const home = evidence.steps.find(({ id }) => id === 'home');
+  const settings = evidence.steps.find(({ id }) => id === 'settings');
+  assert.equal(home.inherited_from, 1);
+  assert.equal(settings.inherited_from, undefined);
+  // The inherited bytes stay where they were captured; nothing is copied into the retry.
+  assert.ok(home.files.every(({ path }) => path.startsWith('attempts/001/')));
+  assert.ok(settings.files.every(({ path }) => path.startsWith('attempts/002/')));
+  assert.equal(status.outcome, 'pass');
+});
+
+test('refuses to inherit a step the source attempt never settled', async () => {
+  const runDir = await fixtureWithWithheldStep();
+  // `home` is re-captured and `settings` — withheld in attempt 1 — is left for inheritance.
+  await mkdir(join(runDir, 'attempts/002/evidence/home'), { recursive: true });
+  for (const name of ['url.txt', 'snapshot.md']) {
+    await writeFile(
+      join(runDir, `attempts/002/evidence/home/${name}`),
+      await readFile(join(runDir, `attempts/001/evidence/home/${name}`)),
+    );
+  }
+  await assert.rejects(
+    sealAttempt({ runDir, attempt: 2, inheritFrom: 1 }),
+    /HONOLOLO_SEAL_STEP_MISSING: settings/u,
+  );
+});
+
+test('refuses an attempt that observed nothing of its own', async () => {
+  const runDir = await sealableFixture();
+  await sealAttempt({ runDir, attempt: 1 });
+  await assert.rejects(
+    sealAttempt({ runDir, attempt: 2, inheritFrom: 1 }),
+    /HONOLOLO_SEAL_INHERIT_ALL/u,
+  );
+});
+
+test('refuses inheritance across a changed plan', async () => {
+  const runDir = await fixtureWithWithheldStep();
+  await writeStepUrl(runDir, 2, 'settings');
+  await appendFile(join(runDir, 'plan/approved.json'), ' ');
+  await assert.rejects(
+    sealAttempt({ runDir, attempt: 2, inheritFrom: 1 }),
+    /HONOLOLO_SEAL_INHERIT_PLAN_MISMATCH/u,
+  );
+});
+
+test('refuses inherited bytes that no longer match the source manifest', async () => {
+  const runDir = await fixtureWithWithheldStep();
+  await writeStepUrl(runDir, 2, 'settings');
+  await writeFile(join(runDir, 'attempts/001/evidence/home/url.txt'), 'https://app.example.com/x\n');
+  await assert.rejects(
+    sealAttempt({ runDir, attempt: 2, inheritFrom: 1 }),
+    /HONOLOLO_SEAL_INHERIT_DIGEST_INVALID/u,
+  );
+});
+
+test('refuses an inheritance source that is not an earlier attempt', async () => {
+  const runDir = await fixtureWithWithheldStep();
+  await writeStepUrl(runDir, 2, 'settings');
+  await assert.rejects(
+    sealAttempt({ runDir, attempt: 2, inheritFrom: 2 }),
+    /HONOLOLO_SEAL_INHERIT_ATTEMPT_INVALID/u,
+  );
 });

@@ -18,3 +18,7 @@ custom agent for each role named by the canonical workflow, giving it the raw fi
 `harness/roles/<role>.md` and only that role's permitted inputs. Configure the evaluator with
 read-only file access and no browser or edit tools. If a fresh isolated custom-agent context is
 unavailable, record `needs_human` for semantic criteria.
+
+Read the target's local memory under `.honololo/targets/<hostname>/` before scouting, and load a
+playbook from `harness/playbooks/` when its signals appear. Speak as the workflow's Voice section
+describes: Korean, brief, already moving — and exact about what the evidence does and does not say.

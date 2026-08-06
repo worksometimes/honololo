@@ -1,6 +1,18 @@
 ### {{index}}. {{title}}
 
-Action: {{instruction}}
+{{intro}}
+
+{{actions}}
+
+{{image}}
+{{image_withheld}}
+
+**Check on this screen**{{checkpoints}}
+
+{{example}}
+
 Expected: {{expected}}
-Image: {{image}}
-Caution: {{cautions}}
+
+{{tips}}
+
+{{cautions}}

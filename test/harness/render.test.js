@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { renderRun } from '../../harness/scripts/render.mjs';
+import { manualText, renderRun } from '../../harness/scripts/render.mjs';
 import {
   addReviewedRetry, fixtureWithHistoricalFreshFailure, fixtureWithHistoricalMissingFresh,
-  reviewedManualFixture, reviewedManualFixtureWithPartialStep, reviewedQaFixture, treeDigest,
-  unverifiedFixture,
+  manualFixtureWithContestedStep, reviewedManualFixture, reviewedManualFixtureWithPartialStep,
+  richManualFixture,
+  reviewedQaFixture, treeDigest, unverifiedFixture,
 } from './helpers.mjs';
 
 test('aggregates criterion verdicts with fail over needs_human over pass', async () => {
@@ -83,7 +84,7 @@ test('binds reviews to their declared source, attempt, criterion, and evidence s
   });
 });
 
-test('renders a portable five-part manual from verified screenshot bytes', async () => {
+test('renders a portable manual from verified screenshot bytes', async () => {
   const runDir = await reviewedManualFixture();
   const output = await renderRun({ runDir, attempt: 1, type: 'manual' });
   const markdown = await readFile(output, 'utf8');
@@ -91,10 +92,10 @@ test('renders a portable five-part manual from verified screenshot bytes', async
   const asset = await readFile(join(runDir, 'output/assets/001-settings.png'));
 
   assert.match(markdown, /### 1\. Open settings/u);
-  assert.match(markdown, /Action:/u);
+  assert.match(markdown, /Choose Settings from the account menu\./u);
   assert.match(markdown, /Expected:/u);
-  assert.match(markdown, /Image: !\[Open settings\]\(assets\/001-settings\.png\)/u);
-  assert.match(markdown, /Caution:/u);
+  assert.match(markdown, /!\[Open settings\]\(assets\/001-settings\.png\)/u);
+  assert.match(markdown, /> 🔒 Do not change account settings\./u);
   assert.doesNotMatch(markdown, /attempts\/001\/evidence/u);
   assert.deepEqual(asset, source);
 });
@@ -106,7 +107,7 @@ test('renders manual image alt text for a valid step ID with empty hyphen segmen
   const output = await renderRun({ runDir, attempt: 1, type: 'manual' });
   assert.equal(
     (await readFile(output, 'utf8')).includes(
-      'Image: ![Open \\[settings\\]](assets/001-settings--panel-.png)',
+      '![Open \\[settings\\]](assets/001-settings--panel-.png)',
     ),
     true,
   );
@@ -148,8 +149,8 @@ test('publishes screenshots per step for a qualified needs_human manual', async 
 
   assert.match(markdown, /Overall: needs_human/u);
   assert.match(markdown, /published only for steps whose criteria all passed \(1 of 2\)/u);
-  assert.match(markdown, /Image: !\[Open settings\]\(assets\/001-settings\.png\)/u);
-  assert.match(markdown, /Image: Unpublished pending review\./u);
+  assert.match(markdown, /!\[Open settings\]\(assets\/001-settings\.png\)/u);
+  assert.match(markdown, /^Unpublished pending review\.$/mu);
   await readFile(join(runDir, 'output/assets/001-settings.png'));
   await assert.rejects(readFile(join(runDir, 'output/assets/002-profile.png')), /ENOENT/u);
 });
@@ -262,7 +263,7 @@ test('prefers a run-local template so a deliverable sets its own language', asyn
   assert.match(markdown, /### 1단계\. Open settings/u);
   assert.match(markdown, /동작: Choose Settings from the account menu\./u);
   assert.match(markdown, /화면: !\[Open settings\]\(assets\/001-settings\.png\)/u);
-  assert.doesNotMatch(markdown, /Screenshot manual|Action:|Caution:/u);
+  assert.doesNotMatch(markdown, /Screenshot manual|Expected:/u);
 });
 
 test('renders parenthesised non-English prose without escape noise', async () => {
@@ -275,4 +276,51 @@ test('renders parenthesised non-English prose without escape noise', async () =>
   const markdown = await readFile(await renderRun({ runDir, attempt: 1, type: 'qa' }), 'utf8');
   assert.match(markdown, /Goal: 연결 상태 3종\(연결됨\/다시 연결 필요\/미연결\)을 문서화한다/u);
   assert.doesNotMatch(markdown, /\\\(|\\\)/u);
+});
+
+// A retry exists so the steps it did not need to touch still reach the reader. Withholding every
+// screenshot because one step's history is contested is what pushed operators to assemble the
+// deliverable by hand outside the harness.
+test('publishes the settled steps of a retry and withholds only the contested one', async () => {
+  const runDir = await manualFixtureWithContestedStep();
+  await renderRun({ runDir, attempt: 2, type: 'manual' });
+  const manual = await readFile(join(runDir, 'output/attempt-002/manual.md'), 'utf8');
+
+  assert.match(manual, /!\[Home\]\(assets\/001-home\.png\)/u);
+  assert.match(manual, /### 2\. Settings\n\nOpen Settings\.\n\nUnpublished pending review\./u);
+  assert.match(manual, /Screenshots are published only for steps whose criteria all passed \(1 of 2\)/u);
+  await assert.rejects(
+    stat(join(runDir, 'output/attempt-002/assets/002-settings.png')), /ENOENT/u,
+  );
+});
+
+// The deliverable is the product of the run, and a reader judges it as a document, not as evidence.
+// Everything the plan says about a step has to survive into prose a person can follow.
+test('renders the full manual document: concept, sections, ordered actions, callouts', async () => {
+  const runDir = await richManualFixture();
+  const markdown = await readFile(await renderRun({ runDir, attempt: 1, type: 'manual' }), 'utf8');
+
+  assert.match(markdown, /^# Connectors\n/u);
+  assert.match(markdown, /A connector links a service you already use/u);
+  assert.match(markdown, /\*\*Before you start\*\*\n\n- An administrator has enabled/u);
+  assert.match(markdown, /\n## Getting started\n\n### 1\. Open the connector menu/u);
+  assert.match(markdown, /1\. Choose the \*\*＋\*\* button/u);
+  assert.match(markdown, /3\. Choose it to open the submenu/u);
+  assert.match(markdown, /\*\*Check on this screen\*\*\n\n1\. \*\*Workspace\*\* — Pick the workspace/u);
+  assert.match(markdown, /> Find the pages about the design guide\./u);
+  assert.match(markdown, /> 💡 With no connector enabled/u);
+  assert.match(markdown, /> 🔒 Do not change account settings\./u);
+  // The run's own bookkeeping belongs after the document, not in front of the reader.
+  assert.match(markdown, /## How this document was produced[\s\S]*Overall: pass/u);
+});
+
+// Bold is the one markup a manual may carry, because a reader needs the product's control names to
+// stand out. It must not become a way for page-derived text to build anything else.
+test('manual prose keeps bold control names and escapes every other markup', () => {
+  assert.equal(manualText('Press **Save** now'), 'Press **Save** now');
+  assert.equal(manualText('a [link](http://x) here'), 'a \\[link\\](http://x) here');
+  assert.equal(manualText('**[link](http://x)**'), '\\*\\*\\[link\\](http://x)\\*\\*');
+  assert.equal(manualText('**<img src=x>**'), '\\*\\*\\<img src=x\\>\\*\\*');
+  assert.equal(manualText('**a|b**'), '\\*\\*a\\|b\\*\\*');
+  assert.equal(manualText('_em_ and `code`'), '\\_em\\_ and \\`code\\`');
 });

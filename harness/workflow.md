@@ -1,19 +1,49 @@
 # HONOLOLO canonical workflow
 
-Follow this exact sequence:
+## Voice
 
-`intake -> prepare -> scout -> propose plan -> approve -> execute -> review -> deliver`
+Speak Korean by default, in short 존댓말, like a sharp junior who has already started: "네, 바로
+갑니다", "이거부터 치우고 오겠습니다". Report the outcome first and keep the narration out.
+
+Being eager never means being loose. Say what the evidence says: no "된 것 같습니다", no rounding a
+withheld criterion up to a pass. When something failed, lead with that. When you could not check,
+say you could not check. A consequential action still stops and asks, however light the tone is.
+
+The voice belongs to what you say to the operator. Contracts, evidence, reviews, and rendered
+deliverables keep their own register — never write the persona into a file.
+
+## Path
+
+`intake → prepare → scout → propose → approve → execute → review → deliver`
+
+Two paths through it. Take the **express path** when the goal is narrow and already understood — a
+repeat walk, a known screen, a check the user has asked for before — every planned step is read-only
+navigation and observation, the target is inside one allowed host, and no step reaches a control
+with an external consequence. Then scouting and proposing are one browser batch and one message:
+probe the entry point, write the proposal from what you saw, and — if the target holds a matching
+standing grant — approve and execute without a round trip.
+
+Take the **full path** whenever a step writes, sends, deletes, publishes, changes permissions, or
+touches production data, whenever the target is new, whenever the user is asking "what should we
+even test here", or whenever you are unsure. Its Propose stage is a real conversation, not a
+formality; see the plan review loop below.
+
+Say which path you are taking and why, in one line, before you take it. It is the user's call, and
+they can only make it if they know a choice was made.
+
+The stages below apply to both. The express path compresses them; it never skips one.
+
+## Browser transport
 
 The host agent owns reasoning and browser work. Load the installed `agent-browser` Skill before any
 browser operation; when that Skill is unavailable and a CDP-exposed browser is, use the harness
-transport `harness/scripts/browser.mjs` instead of ad-hoc session scripts. The files in
-`harness/scripts/` are internal deterministic helpers: apart from that transport executing explicit
-host-issued operations, they never browse, and none of them request permission, recover work, or
-make semantic judgments. Script success proves only the structural properties that script reports;
-it is never semantic proof.
+transport `harness/scripts/browser.mjs`. The files in `harness/scripts/` are internal deterministic
+helpers: apart from that transport executing explicit host-issued operations, they never browse,
+request permission, recover work, or make semantic judgments. Script success proves only the
+structural properties that script reports; it is never semantic proof.
 
-The browser transport reads a JSON op list on stdin and targets one open tab by URL substring —
-never by tab index, which is unstable when tabs open or close:
+The transport reads a JSON op list on stdin and targets one open tab by URL substring — never by tab
+index, which is unstable when tabs open or close:
 
 ```text
 <op-list-producer> | node harness/scripts/browser.mjs --target <url-substring> \
@@ -23,29 +53,97 @@ never by tab index, which is unstable when tabs open or close:
 Pass every domain from the run's `allowed_domains` as `--allow` and, when the approved scope is
 narrower than a domain, the run's `target.scope` fragments as `--scope`. The transport refuses
 `goto` outside the guard before navigating, re-checks the page URL after every op, and halts with a
-`safety_stop` result on any drift. Its `capture` op takes the snapshot and screenshot back-to-back
-as one atomic pair and records the screenshot digest inside the paired snapshot file; use it for
-every evidence capture so the snapshot text and pixels always describe the same DOM state. A
-screenshot whose paired snapshot came from a different moment is not valid evidence for
-snapshot-based criteria.
+`safety_stop` result on any drift. A control that opens a tab is reported as `new_tab`: the batch
+keeps operating on the original page, so re-target the next invocation rather than reading the
+unchanged snapshot as "the click did nothing". A new tab outside the guard stops the batch.
+
+Ops: `goto`, `snapshot`, `capture`, `screenshot`, `click`, `hover`, `type`, `press`, `select`,
+`scroll`, `wait_for`, `wait`.
+
+**Batch aggressively.** Each invocation costs a model round trip, which dominates the wall clock of
+a run — far more than the browser does. A whole step's navigation, waiting, and capture belongs in
+one op list. Split only where you genuinely need to read the page before choosing what to do next.
+
+**Wait for conditions, not durations.** Every op settles the document before returning — it waits
+until the DOM stops changing, bounded by a cap — so an ordinary page needs no explicit wait at all,
+and an `ms` on an op is a ceiling rather than a guaranteed sleep. When a step depends on something
+arriving or leaving on its own schedule, say so: `{"op": "wait_for", "selector": ".spinner", "gone":
+true}` or `{"op": "wait_for", "text": "저장되었습니다", "timeout": 5000}`. An unmet `wait_for` stops
+the batch unless you mark it `"optional": true`. Reach for `wait` only when nothing observable marks
+the moment.
+
+Its `capture` op takes the snapshot and screenshot back-to-back as one atomic pair and records the
+screenshot digest inside the paired snapshot file; use it whenever a step needs both, so the
+snapshot text and pixels always describe the same DOM state. A screenshot whose paired snapshot came
+from a different moment is not valid evidence for snapshot-based criteria.
 
 It reports each op as a compact digest: one header line per op, one line per control, repeated
 identical controls collapsed to a single line naming their refs, then the visible text. The
 persisted snapshot keeps every element, so nothing is lost; `--json` returns the raw records when a
 consumer needs them. Element refs stay valid until the next snapshot, screenshots included.
 
-Two options make a capture describe one region instead of a whole document:
+`"within": "<css-selector>"` scopes a `snapshot` or `capture` to one element subtree — its text and
+its controls only. Prefer it whenever page chrome permanently shows an account name, a history list,
+or other personal data that no product control can hide: a scoped capture is how the pre-persistence
+gate below is satisfied without discarding the step. It resolves the first match, so a nested popover
+needs a selector specific enough to reach it. To frame the screenshot on that same element, and for
+annotation and cropping, see `harness/playbooks/screenshot-capture.md`.
 
-- `"within": "<css-selector>"` scopes a `snapshot` or `capture` to one element subtree — its text and
-  its controls only. Prefer it whenever page chrome permanently shows an account name, a history
-  list, or other personal data that no product control can hide: a scoped capture is how the
-  pre-persistence gate below is satisfied without discarding the step. It resolves the first match,
-  so a nested popover needs a selector specific enough to reach it.
-- `"clip": "within"` frames the screenshot on that same element. It captures the full surface and
-  crops it using the page's own `devicePixelRatio`, because Playwright's own `clip` and element
-  screenshots map CSS pixels with a scale they infer for the browser; when a human-operated Chrome
-  has page zoom enabled that scale is wrong, and the capture silently frames the wrong pixels while
-  still looking plausible. Never hand-measure a pixel rectangle from a snapshot box.
+## What to capture
+
+Evidence is what the criteria need, not everything the page could show. The plan's per-step
+`evidence` list is that decision, and it is what sealing enforces.
+
+A **manual** documents a screen, so nearly every step declares `screenshot` and the reader sees the
+product. A **QA** run mostly asserts on text, and a screenshot there costs a PNG encode, a step in
+the pre-persistence gate, and a round trip spent looking at pixels nobody will read. Default a QA
+step to `url` and `snapshot`, persisted with the cheap path:
+
+```json
+{"op": "snapshot", "path_prefix": "<run>/attempts/001/evidence/<step-id>/capture"}
+```
+
+Add `screenshot` to a QA step only when the criterion is genuinely visual — a layout, a chart, a
+rendered state no text describes — or when the deliverable is meant to show the failure. When a step
+fails and you want pixels to diagnose it, capture them outside `attempts/`; a file the plan never
+declared is not evidence, and sealing refuses it.
+
+## Target memory
+
+Target memory is personal and local. It names a real host, so it lives only under
+`.honololo/targets/<hostname>/` on one operator's machine: never committed, never packaged, never
+shared. Append with the helper, which refuses a note carrying a credential or an email:
+
+```text
+node harness/scripts/target-note.mjs --host <hostname> --kind <kind> --note "<text>"
+node harness/scripts/target-note.mjs --host <hostname> --run <run-id> --outcome <outcome> --note "<goal>"
+```
+
+Kinds: `navigation`, `auth`, `glossary`, `timing`, `hazard`, `forbidden`, `lesson`.
+
+Read `profile.md` and `runs.md` at intake, before scouting. They are what makes a repeat target
+fast: a navigation map you do not have to rediscover, the product's own vocabulary, the areas that
+broke last time. They are also stale by construction — a note records what was true when it was
+written, so treat it as where to look, never as evidence. Evidence is always captured this run.
+
+A target may also keep `templates/manual.md`, `templates/manual.step.md`, or `templates/qa-result.md`
+there. Copy them into the run directory at prepare, so the run carries the bytes it rendered from.
+
+At deliver, append what the next run would want to know. Promote a lesson to a repository playbook
+only after stripping every trace of the target; real identity never moves out of `.honololo/`.
+
+## Playbooks
+
+`harness/playbooks/` holds target-agnostic recipes. Load one when its signals appear, not
+otherwise — they exist so this document can stay short.
+
+- `editors.md` — rich-text CMS, wiki, and document tools. **Required** before any step that edits
+  content in one.
+- `timing-async.md` — skeletons, spinners, toasts, optimistic UI, lazy loading.
+- `auth-session.md` — sign-in, SSO, consent screens, expired sessions.
+- `screenshot-capture.md` — framing a region, annotating, cropping.
+- `manual-writing.md` — what a delivered manual has to contain to be worth reading. **Required**
+  for every `manual` run, before you write the plan's `document` and `manual` blocks.
 
 ## Intake
 
@@ -55,7 +153,11 @@ completion, a bounded `max_actions`, and forbidden product actions. Default `all
 exact target hostname; never widen it because of a redirect. When the user restricts work to part of
 a site ("only this menu", "never touch other admin pages"), record that restriction as URL
 substrings in the optional `target.scope` field so the browser transport can enforce it
-mechanically. Ask one concise question only when its answer materially changes the run.
+mechanically.
+
+Intake settles what the run *is*, not yet what it will check. Read back the goal in one or two
+sentences with your reading of the completion condition, and let the user correct that framing
+before you spend a browser round trip on it. Deciding what to check belongs to Propose.
 
 If a URL-missing request names a production action with external consequences, make the first
 response explicitly refuse that production action and offer a disposable non-production
@@ -86,8 +188,9 @@ wrapper, provider, or recovery process.
 
 ## Scout
 
-Scout only enough to answer open plan questions. Use `harness/roles/scout.md` in a fresh role context
-when delegation is available. With `agent-browser`, repeat:
+Scout only enough to answer open plan questions — with a target profile in hand that is often one
+batch, and sometimes none. Use `harness/roles/scout.md` in a fresh role context when delegation is
+available. With `agent-browser`, repeat:
 
 ```text
 snapshot -> inspect semantic refs -> safe action -> resnapshot
@@ -103,24 +206,68 @@ tokens, personal data, or secret form values. Mask or avoid that content through
 resnapshot before capture. If a safe view is impossible, persist no contaminated capture; record
 only a non-sensitive observation and mark the evidence candidate unavailable.
 
-## Propose plan
+## Propose
 
-Write `plan/proposal.md` with scope, goal-oriented steps, observable `done_when` criteria, required
-evidence, risks, product confirmation gates, budget, deliverables, and excluded work. Reference
-`harness/contracts/plan.schema.json` and the templates under `harness/templates/`; do not copy their
-schemas or structures into prompts.
+`plan/proposal.md` is the QA plan the user and you write together. Follow
+`harness/templates/proposal.md` for its shape: goal, a coverage table of what is worth checking and
+why, what is deliberately excluded, open decisions, budget, and confirmation gates. Write it in the
+user's language. Reference `harness/contracts/plan.schema.json` for what the approved contract will
+need; do not copy schemas or template structures into prompts.
+
+### The plan review loop
+
+On the full path, deciding what to check is the most valuable conversation in the run — the user
+knows which parts of their product are fragile, which failures would actually matter, and which
+areas are someone else's problem. That knowledge does not arrive from a checklist. Draft, show,
+revise, repeat until the user says go.
+
+- **Bring a draft, never a blank form.** Arrive with a coverage table you already filled in from
+  scouting and target memory. Reacting to eight concrete rows is fast; answering "what should we
+  test?" is work you are asking the user to do for you.
+- **Every open decision carries your recommendation**, so agreeing costs one word. "이렇게 갈까요?"
+  beats "어떻게 할까요?".
+- **One round is one message with at most about three decisions.** A dozen questions in sequence is
+  an interrogation, and it produces worse plans than a draft with three real choices in it.
+- **Write down what you cut and why.** A struck row moves to Excluded, and the reason stays with it.
+  That is the section that stops the same argument from recurring next run.
+- **Say what you are unsure about.** An area you could not scout, a state you cannot reach without
+  test data, a criterion you do not know how to observe — name it in the draft rather than quietly
+  planning around it.
+- **Stop when the remaining questions would not change what you do.** Ceremony past that point is
+  not thoroughness; it is delay.
+
+Update the file each round and show the user the diff in prose — what moved, what you cut, what is
+still open — rather than repasting the whole document.
 
 Use deterministic criterion types whenever possible. Use `rubric` only for genuinely semantic
 criteria and set `review.fresh_evaluator` to true. A plan describes outcomes, not a brittle click
 script. Show the proposed scope and every externally consequential action to the user.
 
+On the express path this collapses to one message: the coverage table, the gates, and "이대로
+갑니다" — with the same duty to say what you are unsure about, and the same willingness to open the
+full loop the moment the user pushes back.
+
+Two criterion semantics matter. `url_matches` is a substring test over the whole observed URL,
+including its query string, which the executor chooses; do not let it stand alone as proof that a
+page was reached. `file_exists` and `image_exists` take an evidence file name or a run-relative
+evidence path, never a prose description — a description matches no file and evaluates to `fail`.
+
 ## Approve
 
-Do not execute until the user approves the proposal. Write the approved contract to
-`plan/approved.json`, including the proposal SHA-256 and approval metadata, and then treat those bytes
-as immutable. Product-level confirmation is required only for delete, purchase, publish, send,
-invite, permission or billing change, production-data mutation, or another external consequence not
-already authorized in the approved plan. A runtime permission prompt is not product confirmation.
+Do not execute until the plan is approved. Write the approved contract to `plan/approved.json`,
+including the proposal SHA-256 and approval metadata, and then treat those bytes as immutable.
+
+Approval comes one of two ways. `"mode": "interactive"` — the default — is the user reading this
+proposal and saying yes. `"mode": "standing"` cites a grant the user gave this target earlier for a
+shape of read-only work, named in `approved.grant`; the contract accepts it only when every step is
+`risk: low`, so a standing grant can never carry a step that writes, sends, or publishes. Record a
+grant under `.honololo/targets/<hostname>/`, state its scope and its limits in plain language, and
+treat any user instruction to narrow or revoke it as immediate.
+
+Product-level confirmation is required regardless of approval mode for delete, purchase, publish,
+send, invite, permission or billing change, production-data mutation, or another external
+consequence not already authorized in the approved plan. A runtime permission prompt is not product
+confirmation.
 
 Never rewrite an approved plan. If scope or criteria change, preserve the original, create an
 explicitly numbered proposal revision, obtain approval again, and execute the revision in a new run
@@ -130,8 +277,7 @@ whose `plan/approved.json` contains that revision.
 
 Allocate the next contiguous attempt by inspecting `attempts/` and creating the unused, zero-padded
 number (`001`, then `002`). Never overwrite, delete, complete, or silently repair an earlier attempt.
-A directory without terminal `status.json` remains `interrupted`. Before retrying, explain the prior
-failure; retry is a new attempt and all history remains relevant.
+A directory without terminal `status.json` remains `interrupted`.
 
 Execute only approved steps through `agent-browser`. Navigation may adapt to the current page, but
 criteria, boundaries, risks, and budgets may not. For each action, use a fresh snapshot, select a
@@ -161,33 +307,15 @@ presentation, never a substitute for that gate or for masking secrets through th
 Persist the annotated file as the step's screenshot evidence and keep the raw capture out of
 `attempts/`, or skip annotation entirely.
 
-When a step edits content inside a third-party editor (a rich-text CMS, wiki, or document tool),
-apply these rules; they were earned from real incidents, and violating them has caused data loss
-and an unauthorized publish:
-
-- Treat merge, publish, approve, send, and delete controls as outside every approved step unless
-  the approved plan names that exact control; a recovery attempt is never authorization to touch
-  them.
-- Never extend a selection and delete (`Shift+End`, `Cmd+A`, drag) without first verifying the
-  selection's actual extent in the rendered page; visual lines and logical paragraphs differ in
-  rich-text editors, and one wrong selection can delete most of a document.
-- Verify clipboard content immediately before every paste; on a shared machine the clipboard can
-  change between copy and paste.
-- Do not spam undo in an unfamiliar editor. After one failed undo, stop and re-inspect: undo
-  shortcuts can trigger unrelated toolbar actions, including irreversible ones.
-- Insert images and blocks through the editor's explicit insert control into an empty block, never
-  by pasting into or typing after an existing paragraph, and confirm the picker actually has focus
-  before typing into it.
-
 Store evidence under `attempts/<NNN>/evidence/<step-id>/`, one file per declared evidence kind. The
-`capture` op already writes acceptable names (`<name>.png` and `<name>.snapshot.json`); `url.txt` and
-`actions.json` are the other two.
+`capture` and `snapshot` ops already write acceptable names (`<name>.png` and
+`<name>.snapshot.json`); `url.txt` and `actions.json` are the other two.
 
 Then seal the attempt. Do not hand-author `evidence.json` or `status.json`:
 
 ```text
 node harness/scripts/seal.mjs <run-directory> --attempt <positive-integer> \
-  [--needs-human <criterion-id>=<reason>]...
+  [--inherit-from <attempt>] [--needs-human <criterion-id>=<reason>]...
 ```
 
 Sealing scans that evidence directory and writes both files: the manifest with real byte counts and
@@ -198,18 +326,33 @@ replace a sealed manifest. When a snapshot records which screenshot it was captu
 bytes disagree with it. Sealing is not semantic proof: it reports what the bytes say, including
 `fail`, and it cannot tell whether the bytes describe the page you believe they do.
 
-Use `--needs-human <id>=<reason>` for a criterion the pre-persistence gate below forced you to
-withhold. It records the criterion as unresolved and keeps the operator's reason, but never below what
-the evidence shows: a criterion the bytes deterministically fail stays `fail`. No flag softens or
+Use `--needs-human <id>=<reason>` for a criterion the pre-persistence gate forced you to withhold. It
+records the criterion as unresolved and keeps the operator's reason, but never below what the
+evidence shows: a criterion the bytes deterministically fail stays `fail`. No flag softens or
 promotes a verdict, because the verifier re-evaluates every deterministic criterion and rejects any
 verdict weaker than the evidence supports — an executor may be more conservative than the evidence,
 never less. Failures and partial work are evidence, not automatic retry triggers.
 
-Two criterion semantics matter when writing a plan. `url_matches` is a substring test over the whole
-observed URL, including its query string, which the executor chooses; do not let it stand alone as
-proof that a page was reached. `file_exists` and `image_exists` take an evidence file name or a
-run-relative evidence path, never a prose description — a description matches no file and evaluates
-to `fail`.
+### Retrying
+
+Before retrying, explain the prior failure. A retry is a new attempt and all history remains
+relevant — but it is not a fresh start. Re-capture only the steps that actually need re-observing
+and inherit the rest:
+
+```text
+node harness/scripts/seal.mjs <run-directory> --attempt 2 --inherit-from 1
+```
+
+A step with no evidence directory in the new attempt carries forward the earlier attempt's files,
+at their original paths, re-hashed against the digest that attempt recorded. Only a step whose every
+criterion passed there is inheritable: a failed, withheld, or unreviewed step has to be observed
+again, and an attempt that inherits everything is refused because it observed nothing. Inheritance
+across a changed plan is refused too.
+
+The verifier reports the carried steps as `inherited_steps`, and reports as `contested_steps` the
+steps this attempt calls passed where the history disagrees — an earlier non-pass verdict, an
+unsealed earlier attempt, or a capture repeating another step's bytes. A contested step withholds
+its own screenshot; the steps around it still publish.
 
 ## Review
 
@@ -227,12 +370,12 @@ recorded — running it too early reports the failure and leaves the slot free f
 The verifier re-derives what it can instead of trusting the attempt's own account of itself. It
 checks the approved plan against the SHA-256 of `plan/proposal.md`, re-evaluates every deterministic
 criterion from the evidence bytes, requires the deterministic status to report all of them, rejects
-any verdict weaker than the evidence supports, and rejects a screenshot that disagrees with its paired
-snapshot. It also reports `duplicate_captures`: two steps whose snapshots are byte-identical and whose
-screenshots agree — identical in both, or absent from both — observed nothing new, so a copied capture
-cannot stand in as independent evidence for a second step; that sets `requires_human_review`. A shared
-snapshot beside differing screenshots is left alone, because scrolling changes a page's pixels without
-changing its text.
+any verdict weaker than the evidence supports, rejects a screenshot that disagrees with its paired
+snapshot, and rejects evidence claimed as inherited from the attempt itself or a later one. It also
+reports `duplicate_captures`: two steps whose snapshots are byte-identical and whose screenshots
+agree — identical in both, or absent from both — observed nothing new, so a copied capture cannot
+stand in as independent evidence for a second step. A shared snapshot beside differing screenshots
+is left alone, because scrolling changes a page's pixels without changing its text.
 
 If `ok` is false, do not perform semantic review, do not render, and do not convert the error to a
 pass. Report the structural failure; any continued work uses the next attempt.
@@ -252,8 +395,7 @@ insufficient, leave semantic criteria as `needs_human`.
 
 Run the verifier again after adding `fresh.json`, with `--write final`. Preserve the full `history`
 and `requires_human_review` fields. Runs without rubric criteria still retain distinct initial and
-final verifier invocations. Earlier fail, blocked, needs_human, or interrupted attempts prevent an
-unqualified later pass.
+final verifier invocations.
 
 ## Deliver
 
@@ -274,11 +416,9 @@ should not carry English scaffolding. Rendered text escapes link, emphasis, code
 syntax, so page-derived content cannot form a live link; parentheses and `#` are left alone, which
 keeps ordinary prose readable.
 
-Manual screenshot publication is gated per step: a fully passed run publishes every step's
-screenshot; a `needs_human` run publishes screenshots only for steps whose own criteria all passed
-and withholds the rest, stating the published count in the review status; any `fail` or an
-unsafe attempt history withholds every screenshot. A withheld screenshot is never copied into
-`output/`.
+Manual screenshot publication is gated per step: a step publishes when its own criteria all passed
+and its own history is uncontested, and the review status states how many of the total published.
+Any `fail` withholds every screenshot. A withheld screenshot is never copied into `output/`.
 
 After delivery, user feedback may require replacing a published asset. Never overwrite an
 `output/assets/` file by hand. Use `harness/scripts/amend.mjs
@@ -290,3 +430,5 @@ match its latest recorded digest. The replacement must itself have passed the pr
 Return the outcome, qualification, failure history, and portable path under
 `.honololo/runs/<run>/output/`. Missing evidence, unavailable fresh semantic review, contradictory
 history, or ambiguity remains `needs_human`. Keep every output link relative and inside `output/`.
+
+Then append to target memory what the next run would want to know, and index the run.

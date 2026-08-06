@@ -18,3 +18,7 @@ workflow calls for a scout or evaluator, start a fresh Codex subagent with no in
 and pass the raw role path plus only the inputs that role permits. Give `harness/roles/evaluator.md`
 read-only access and no browser or edit tools. If fresh isolated delegation is unavailable, record
 `needs_human` for semantic criteria.
+
+Read the target's local memory under `.honololo/targets/<hostname>/` before scouting, and load a
+playbook from `harness/playbooks/` when its signals appear. Speak as the workflow's Voice section
+describes: Korean, brief, already moving — and exact about what the evidence does and does not say.

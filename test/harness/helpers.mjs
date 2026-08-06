@@ -6,6 +6,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sealAttempt } from '../../harness/scripts/seal.mjs';
 
 const fixtureRoot = fileURLToPath(new URL('./fixtures/valid-run/', import.meta.url));
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
@@ -566,6 +567,130 @@ export async function reviewedManualFixtureWithPartialStep() {
       reason: 'The settings screen was independently reviewed.', evidence: [snapshot],
     }],
   });
+  return runDir;
+}
+
+// Attempt 1 of a two-step run, sealed for real: `home` passed and `settings` was withheld by the
+// operator. This is the state a retry starts from — one settled step, one that has to be observed
+// again — so it is the fixture every inheritance test builds on.
+export async function fixtureWithWithheldStep() {
+  const runDir = await validRunFixture();
+  const planPath = join(runDir, 'plan/approved.json');
+  const plan = await readJson(planPath);
+  plan.steps.push({
+    id: 'settings', goal: 'Observe the settings screen.', risk: 'low', evidence: ['url'],
+    done_when: [{ id: 'settings-url', type: 'url_matches', value: '/settings' }],
+  });
+  await writeFile(planPath, json(plan));
+
+  await writeStepUrl(runDir, 1, 'settings');
+  await rm(join(runDir, 'attempts/001/evidence.json'));
+  await rm(join(runDir, 'attempts/001/status.json'));
+  await sealAttempt({
+    runDir, attempt: 1, withheld: new Map([['settings-url', 'operator withheld the capture']]),
+  });
+  return runDir;
+}
+
+export async function writeStepUrl(runDir, attempt, stepId) {
+  const directory = join(runDir, `attempts/${String(attempt).padStart(3, '0')}/evidence/${stepId}`);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, 'url.txt'), 'https://app.example.com/settings\n');
+}
+
+// The retry: `settings` is captured again, `home` carries forward the bytes attempt 1 already
+// settled, and nothing else is re-observed.
+export async function fixtureWithInheritedRetry() {
+  const runDir = await fixtureWithWithheldStep();
+  await writeStepUrl(runDir, 2, 'settings');
+  await sealAttempt({ runDir, attempt: 2, inheritFrom: 1 });
+  return runDir;
+}
+
+// A two-step manual whose second step was withheld in attempt 1 and re-captured in attempt 2, with
+// the first step's evidence carried forward. The retry's whole purpose is that the untouched step
+// still reaches the reader, so this is the fixture that pins per-step publication.
+export async function manualFixtureWithContestedStep() {
+  const runDir = await validRunFixture();
+  const runPath = join(runDir, 'run.json');
+  const run = await readJson(runPath);
+  run.type = 'manual';
+  run.deliverables = ['output/manual.md'];
+  await writeFile(runPath, json(run));
+
+  const manualBlock = (title) => ({
+    title, instruction: `Open ${title}.`, expected: `The ${title} heading is visible.`, cautions: [],
+  });
+  const planPath = join(runDir, 'plan/approved.json');
+  const plan = await readJson(planPath);
+  plan.steps[0].evidence.push('screenshot');
+  plan.steps[0].manual = manualBlock('Home');
+  plan.steps.push({
+    id: 'settings', goal: 'Observe the settings screen.', risk: 'low',
+    evidence: ['url', 'screenshot'],
+    done_when: [{ id: 'settings-url', type: 'url_matches', value: '/settings' }],
+    manual: manualBlock('Settings'),
+  });
+  await writeFile(planPath, json(plan));
+
+  await writeFile(
+    join(runDir, 'attempts/001/evidence/home/screen.png'), Buffer.concat([PNG, Buffer.from('home')]),
+  );
+  await writeStepUrl(runDir, 1, 'settings');
+  await writeFile(
+    join(runDir, 'attempts/001/evidence/settings/screen.png'),
+    Buffer.concat([PNG, Buffer.from('settings-first')]),
+  );
+  await rm(join(runDir, 'attempts/001/evidence.json'));
+  await rm(join(runDir, 'attempts/001/status.json'));
+  await sealAttempt({
+    runDir, attempt: 1, withheld: new Map([['settings-url', 'personal data was visible']]),
+  });
+
+  await writeStepUrl(runDir, 2, 'settings');
+  await writeFile(
+    join(runDir, 'attempts/002/evidence/settings/screen.png'),
+    Buffer.concat([PNG, Buffer.from('settings-clean')]),
+  );
+  await sealAttempt({ runDir, attempt: 2, inheritFrom: 1 });
+  return runDir;
+}
+
+// A manual that uses the whole document contract: a concept opening, task sections, ordered
+// actions, what to look at on the screen, a worked example, and both callout kinds.
+export async function richManualFixture() {
+  const runDir = await reviewedManualFixture();
+  const planPath = join(runDir, 'plan/approved.json');
+  const plan = await readJson(planPath);
+  plan.document = {
+    title: 'Connectors',
+    overview: 'A connector links a service you already use, so you can ask for what you need ' +
+      'without leaving the conversation.',
+    prerequisites: ['An administrator has enabled at least one connector.'],
+  };
+  plan.steps[0].manual = {
+    section: 'Getting started',
+    title: 'Open the connector menu',
+    intro: 'Connectors live under the tools area of the composer, not under account settings.',
+    actions: [
+      'Choose the **＋** button at the lower left of the message box.',
+      'Find **Connectors** inside the tools area of the menu that opens.',
+      'Choose it to open the submenu on the right.',
+    ],
+    expected: 'The Settings heading is visible.',
+    checkpoints: [
+      { label: 'Workspace', detail: 'Pick the workspace to connect when you belong to several.' },
+      { label: 'Granted permissions', detail: 'What the assistant will be able to do, verbatim.' },
+    ],
+    example: {
+      ask: 'Find the pages about the design guide.',
+      result: 'The assistant decides on its own that the connector is needed and runs it.',
+    },
+    tips: ['With no connector enabled you will only see an empty-state message.'],
+    cautions: ['Do not change account settings.'],
+  };
+  await writeFile(planPath, json(plan));
+  await refreshFixture(runDir);
   return runDir;
 }
 

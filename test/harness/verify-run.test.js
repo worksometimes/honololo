@@ -10,7 +10,7 @@ import {
   addTraversal, addUnapprovedKind, duplicateKind, fixtureWithCopiedSnapshotOnlyStep,
   fixtureWithDuplicatedCapture, fixtureWithFailedFirstAttemptAndSuccessfulSecond,
   fixtureWithHistoricalFreshFailure, fixtureWithHistoricalMissingFresh,
-  fixtureWithInterruptedFirstAttemptAndSuccessfulSecond,
+  fixtureWithInheritedRetry, fixtureWithInterruptedFirstAttemptAndSuccessfulSecond,
   fixtureWithSharedSnapshotDistinctScreenshots, missingStatusEvidence, refreshEvidenceOnly,
   replaceWithSymlink, reviewedQaFixture, sealableFixture, tamperApprovedPlan, tamperByteCount,
   tamperHash, treeDigest, validRunFixture, writeFakePng, writeOversizeEvidence,
@@ -25,9 +25,10 @@ test('verifies the latest complete attempt without mutating the run', async () =
   const result = await verifyRun({ runDir });
 
   assert.deepEqual(Object.keys(result), [
-    'ok', 'run_id', 'attempt', 'plan_sha256', 'history', 'files', 'amendments',
-    'duplicate_captures', 'errors', 'requires_human_review',
+    'ok', 'run_id', 'attempt', 'plan_sha256', 'approval_mode', 'history', 'files', 'amendments',
+    'duplicate_captures', 'inherited_steps', 'contested_steps', 'errors', 'requires_human_review',
   ]);
+  assert.equal(result.approval_mode, 'interactive');
   assert.equal(result.ok, true);
   assert.equal(result.attempt, 1);
   assert.equal(result.run_id, 'valid-run');
@@ -345,4 +346,88 @@ test('records a final result after a fresh review is added', async () => {
   );
   assert.equal(record.ok, true);
   assert.deepEqual(record.history, [{ attempt: 1, outcome: 'pass' }]);
+});
+
+test('verifies a retry whose settled steps carry earlier evidence forward', async () => {
+  const runDir = await fixtureWithInheritedRetry();
+  const result = await verifyRun({ runDir, attempt: 2 });
+
+  assert.equal(result.ok, true, result.errors.join('; '));
+  assert.deepEqual(result.inherited_steps, [{ step_id: 'home', from: 1 }]);
+  assert.deepEqual(result.history, [
+    { attempt: 1, outcome: 'needs_human' }, { attempt: 2, outcome: 'pass' },
+  ]);
+});
+
+// The point of a retry is that the steps it did not need to touch stay publishable. Only the step
+// whose earlier verdict the retry overturns is contested.
+test('contests only the step whose history disagrees with the retry', async () => {
+  const runDir = await fixtureWithInheritedRetry();
+  const result = await verifyRun({ runDir, attempt: 2 });
+
+  assert.deepEqual(result.contested_steps, ['settings']);
+  assert.equal(result.requires_human_review, true);
+});
+
+test('rejects evidence claimed as inherited from the attempt itself or a later one', async () => {
+  const runDir = await fixtureWithInheritedRetry();
+  const manifestPath = join(runDir, 'attempts/002/evidence.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  manifest.steps.find(({ id }) => id === 'home').inherited_from = 2;
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  const result = await verifyRun({ runDir, attempt: 2 });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join('; '), /HONOLOLO_EVIDENCE_INHERIT_INVALID/u);
+});
+
+test('rejects inherited evidence pointing outside its own step directory', async () => {
+  const runDir = await fixtureWithInheritedRetry();
+  const manifestPath = join(runDir, 'attempts/002/evidence.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const home = manifest.steps.find(({ id }) => id === 'home');
+  home.files[0].path = 'attempts/001/evidence/settings/url.txt';
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  const result = await verifyRun({ runDir, attempt: 2 });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join('; '), /HONOLOLO_EVIDENCE_SCOPE_INVALID/u);
+});
+
+// A standing grant is what makes a low-risk walk a one-sentence delegation. It authorises a shape
+// of work in advance, so the contract has to refuse it the moment the work stops being that shape.
+test('a standing grant covers only a plan of low-risk steps', async (t) => {
+  const withApproval = async (mutate) => {
+    const runDir = await validRunFixture();
+    const planPath = join(runDir, 'plan/approved.json');
+    const plan = JSON.parse(await readFile(planPath, 'utf8'));
+    mutate(plan);
+    await writeFile(planPath, `${JSON.stringify(plan, null, 2)}\n`);
+    return verifyRun({ runDir });
+  };
+
+  await t.test('accepted for low-risk steps', async () => {
+    const result = await withApproval((plan) => {
+      plan.approved.mode = 'standing';
+      plan.approved.grant = 'connector-walk';
+    });
+    // The plan bytes changed, so the manifest no longer matches; the approval itself is what is
+    // under test here, and it is read before any evidence is.
+    assert.equal(result.approval_mode, 'standing');
+    assert.equal(result.errors.join('; ').includes('HONOLOLO_PLAN_INVALID'), false);
+  });
+
+  await t.test('refused without a named grant', async () => {
+    const result = await withApproval((plan) => { plan.approved.mode = 'standing'; });
+    assert.match(result.errors.join('; '), /HONOLOLO_PLAN_INVALID/u);
+  });
+
+  await t.test('refused once a step carries more than low risk', async () => {
+    const result = await withApproval((plan) => {
+      plan.approved.mode = 'standing';
+      plan.approved.grant = 'connector-walk';
+      plan.steps[0].risk = 'medium';
+    });
+    assert.match(result.errors.join('; '), /HONOLOLO_PLAN_INVALID/u);
+  });
 });

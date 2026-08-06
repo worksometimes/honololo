@@ -1,15 +1,18 @@
-# Screenshot manual — {{run_id}}
+# {{document_title}}
+# Screenshot manual — {{fallback_title}}
 
-## Scope
+{{overview}}
+
+**Before you start**{{prerequisites}}
+
+{{steps}}
+
+***
+
+## How this document was produced
 
 {{scope}}
 
-## Environment
-
 {{environment}}
 
-## Review status
-
 {{review_status}}
-
-{{steps}}

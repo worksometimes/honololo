@@ -10,7 +10,6 @@ const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_EVIDENCE_BYTES = 64 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from('89504e470d0a1a0a', 'hex');
 const ATTEMPT_NAME = /^\d{3}$/u;
-const UNSAFE_HISTORY = new Set(['fail', 'needs_human', 'blocked', 'interrupted']);
 const VERDICT_ORDER = { pass: 0, needs_human: 1, fail: 2 };
 
 function sha256(bytes) {
@@ -132,6 +131,7 @@ async function verifyEvidence(runDir, attempt, plan, planSha256, indexed) {
 
   const seenSteps = new Set();
   const verified = [];
+  const inheritedSteps = [];
   const stepsById = new Map();
   for (const claimedStep of manifest.steps) {
     const approvedStep = indexed.steps.get(claimedStep.id);
@@ -142,7 +142,16 @@ async function verifyEvidence(runDir, attempt, plan, planSha256, indexed) {
     const expectedKinds = new Set(approvedStep.evidence);
     const seenKinds = new Set();
     const seenPaths = new Set();
-    const scope = `${attemptDir}/evidence/${claimedStep.id}/`;
+    // A step may carry forward the evidence an earlier attempt already settled, in which case its
+    // files stay at their original paths. The scope stays exactly one directory either way: the
+    // named attempt's own directory for this step, never a sibling step's and never a later attempt.
+    const carried = claimedStep.inherited_from;
+    if (carried !== undefined && carried >= attempt) {
+      throw verifierError('HONOLOLO_EVIDENCE_INHERIT_INVALID', `${claimedStep.id}:${carried}`);
+    }
+    const scope = carried === undefined
+      ? `${attemptDir}/evidence/${claimedStep.id}/`
+      : `attempts/${String(carried).padStart(3, '0')}/evidence/${claimedStep.id}/`;
     const evidenceFiles = new Map();
 
     for (const file of claimedStep.files) {
@@ -184,12 +193,13 @@ async function verifyEvidence(runDir, attempt, plan, planSha256, indexed) {
     if (paired !== null && evidenceFiles.get('screenshot')?.sha256 !== paired) {
       throw verifierError('HONOLOLO_CAPTURE_PAIR_INVALID', claimedStep.id);
     }
+    if (carried !== undefined) inheritedSteps.push({ step_id: claimedStep.id, from: carried });
     stepsById.set(claimedStep.id, { id: claimedStep.id, files: evidenceFiles });
   }
   if (seenSteps.size !== indexed.steps.size) {
     throw verifierError('HONOLOLO_EVIDENCE_STEP_MISSING');
   }
-  return { verified, stepsById };
+  return { verified, stepsById, inheritedSteps };
 }
 
 // A step that repeats another step's captured bytes observed nothing new, so a copied capture cannot
@@ -288,9 +298,26 @@ function effectiveOutcome(plan, deterministic, fresh) {
   return outcome;
 }
 
+function recordedVerdicts(plan, status, fresh) {
+  const byId = new Map();
+  for (const { id, verdict } of status.criteria) byId.set(id, verdict);
+  for (const { id, verdict } of fresh?.criteria ?? []) byId.set(id, verdict);
+  const verdicts = new Map();
+  for (const step of plan.steps) {
+    // An unreported criterion is unresolved, exactly as `effectiveOutcome` reads it. Treating its
+    // absence as a pass would let a retry launder a criterion by simply not mentioning it.
+    for (const { id } of step.done_when) verdicts.set(id, byId.get(id) ?? 'needs_human');
+  }
+  return verdicts;
+}
+
 async function attemptHistory(runDir, plan, planSha256, selected, indexed) {
   const history = [];
+  const earlierNonPass = new Set();
+  let interruptedEarlier = false;
+  let selectedVerdicts = new Map();
   let selectedFiles = [];
+  let selectedInherited = [];
   let selectedHasStatus = false;
   for (let attempt = 1; attempt <= selected; attempt += 1) {
     const name = String(attempt).padStart(3, '0');
@@ -301,9 +328,12 @@ async function attemptHistory(runDir, plan, planSha256, selected, indexed) {
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
       history.push({ attempt, outcome: 'interrupted' });
+      // An attempt that was never sealed says nothing about any step, so nothing about it can be
+      // cleared per step later.
+      if (attempt < selected) interruptedEarlier = true;
       continue;
     }
-    const { verified: files, stepsById } = await verifyEvidence(
+    const { verified: files, stepsById, inheritedSteps } = await verifyEvidence(
       runDir, attempt, plan, planSha256, indexed,
     );
     validateAttemptReview(plan, status, 'deterministic', attempt, files, indexed);
@@ -319,18 +349,42 @@ async function attemptHistory(runDir, plan, planSha256, selected, indexed) {
       validateAttemptReview(plan, fresh, 'fresh_evaluator', attempt, files, indexed);
     }
     history.push({ attempt, outcome: effectiveOutcome(plan, status, fresh) });
+    const verdicts = recordedVerdicts(plan, status, fresh);
     if (attempt === selected) {
       selectedHasStatus = true;
       selectedFiles = files;
+      selectedInherited = inheritedSteps;
+      selectedVerdicts = verdicts;
+    } else {
+      for (const [id, verdict] of verdicts) if (verdict !== 'pass') earlierNonPass.add(id);
     }
   }
-  return { history, selectedFiles, selectedHasStatus };
+  return {
+    history, selectedFiles, selectedInherited, selectedHasStatus,
+    earlierNonPass, interruptedEarlier, selectedVerdicts,
+  };
 }
 
-function needsHistoryReview(history, duplicates) {
-  if (duplicates.length > 0) return true;
-  return history.at(-1)?.outcome === 'pass' &&
-    history.slice(0, -1).some(({ outcome }) => UNSAFE_HISTORY.has(outcome));
+// A contradictory history is a property of the step it contradicts, not of the whole run. When one
+// step failed in an earlier attempt and passes now, that step is the one a human should look at;
+// withholding every other step's evidence alongside it does not make the run safer, it makes a
+// retry pointless and pushes the operator to assemble the deliverable by hand outside the harness.
+// A step is contested when the selected attempt calls it passed and the run's history disagrees:
+// an earlier attempt recorded a non-pass for one of its criteria, an earlier attempt was never
+// sealed at all, or its capture repeats another step's bytes.
+function contestedSteps(indexed, verified, duplicates) {
+  const contested = new Set();
+  const passesNow = (stepId) => indexed.steps.get(stepId)?.done_when
+    .every(({ id }) => verified.selectedVerdicts.get(id) === 'pass') === true;
+
+  for (const [id, stepId] of indexed.criteria) {
+    if (verified.earlierNonPass.has(id) && passesNow(stepId)) contested.add(stepId);
+  }
+  if (verified.interruptedEarlier) {
+    for (const stepId of indexed.steps.keys()) if (passesNow(stepId)) contested.add(stepId);
+  }
+  for (const duplicate of duplicates) for (const stepId of duplicate.steps) contested.add(stepId);
+  return [...contested].sort();
 }
 
 async function verifyAmendments(runDir, runId) {
@@ -362,10 +416,13 @@ export async function verifyRun({ runDir, attempt } = {}) {
     run_id: null,
     attempt: null,
     plan_sha256: null,
+    approval_mode: null,
     history: [],
     files: [],
     amendments: [],
     duplicate_captures: [],
+    inherited_steps: [],
+    contested_steps: [],
     errors: [],
     requires_human_review: false,
   };
@@ -397,6 +454,10 @@ export async function verifyRun({ runDir, attempt } = {}) {
     const indexed = planIndex(plan);
     result.run_id = run.id;
     result.plan_sha256 = sha256(planRecord.bytes);
+    // Recorded so the run's own verifier record says which approval authorised it. The schema
+    // already refuses a standing grant over anything above a low-risk step; this makes the choice
+    // visible in the artifact a reader inspects afterwards rather than only in the plan.
+    result.approval_mode = plan.approved.mode ?? 'interactive';
 
     const attempts = await listAttempts(runDir);
     const selected = attempt ?? attempts.at(-1);
@@ -406,8 +467,10 @@ export async function verifyRun({ runDir, attempt } = {}) {
       runDir, plan, result.plan_sha256, selected, indexed,
     );
     result.history = verified.history;
+    result.inherited_steps = verified.selectedInherited;
     result.duplicate_captures = duplicateCaptures(verified.selectedFiles);
-    result.requires_human_review = needsHistoryReview(result.history, result.duplicate_captures);
+    result.contested_steps = contestedSteps(indexed, verified, result.duplicate_captures);
+    result.requires_human_review = result.contested_steps.length > 0;
     if (!verified.selectedHasStatus) throw verifierError('HONOLOLO_ATTEMPT_INTERRUPTED');
     result.files = verified.selectedFiles;
     result.amendments = await verifyAmendments(runDir, run.id);
