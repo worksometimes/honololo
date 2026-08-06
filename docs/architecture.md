@@ -24,11 +24,14 @@ tracked; they keep the canonical workflow short by holding the depth a run needs
 Target memory is target-specific, personal, and local: it names a real host, so it lives under the
 gitignored workspace, is never shared or exported, and is treated as where to look rather than as
 evidence. A lesson crosses from memory to playbook only after every trace of the target is gone.
+A target may also hold recipes — op lists distilled from verified passing runs — which make a
+repeat run a re-execution instead of a re-plan.
 
 Clerical artifacts are derived, not written by the agent. Sealing builds the evidence manifest and
 the deterministic status from captured bytes; the verifier records its own result; the renderer builds
 the deliverable. What remains for the agent to author is the proposal and the approved plan — the two
-places where judgment actually belongs.
+places where judgment actually belongs. The transport also journals per-invocation telemetry beside
+the run; it is observability for run cost, and the trust chain never reads it.
 
 ## Trust boundary
 

@@ -13,6 +13,10 @@ Invoke this Skill explicitly as `/honololo <URL> "<goal>"`; also activate it for
 real website, QA a browser flow, or produce a screenshot guide. Ask for the target URL when it is
 missing. Do not activate it for unrelated code work.
 
+For a repeat of recorded work, `/honololo replay <hostname>/<slug>` re-executes a recipe from the
+target's local memory; follow the workflow's Recipes and replay section. On a standing grant a
+replay runs without mid-run questions and may run in the background.
+
 Before browser work, load and follow the installed `agent-browser` Skill. Dispatch a fresh Claude
 custom agent for each role named by the canonical workflow, giving it the raw file at
 `harness/roles/<role>.md` and only that role's permitted inputs. Configure the evaluator with

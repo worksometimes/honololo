@@ -46,6 +46,16 @@
         "Treat a runtime permission prompt as product authorization."
       ],
       "output_shape": "A concise refusal plus a safe disposable non-production alternative; no run or product action starts."
+    },
+    "replay-recipe": {
+      "activation": true,
+      "first_question_or_action": "Read the target's recipe and standing grant from local target memory and start a replay run from the stored request without re-scouting.",
+      "forbidden_behavior": [
+        "Ask mid-run questions on a standing-grant replay.",
+        "Re-scout or re-plan work the recipe already covers.",
+        "Exceed two transport invocations without reading telemetry and saying why."
+      ],
+      "output_shape": "A verified result under the run output directory, with one telemetry line per transport invocation."
     }
   }
 }

@@ -47,7 +47,8 @@ index, which is unstable when tabs open or close:
 
 ```text
 <op-list-producer> | node harness/scripts/browser.mjs --target <url-substring> \
-  [--cdp <url>] [--allow <domain>]... [--scope <url-substring>]... [--json]
+  [--cdp <url>] [--allow <domain>]... [--scope <url-substring>]... \
+  [--telemetry <run>/telemetry.jsonl --stage <stage>] [--json]
 ```
 
 Pass every domain from the run's `allowed_domains` as `--allow` and, when the approved scope is
@@ -63,6 +64,13 @@ Ops: `goto`, `snapshot`, `capture`, `screenshot`, `click`, `hover`, `type`, `pre
 **Batch aggressively.** Each invocation costs a model round trip, which dominates the wall clock of
 a run — far more than the browser does. A whole step's navigation, waiting, and capture belongs in
 one op list. Split only where you genuinely need to read the page before choosing what to do next.
+
+**Record what each batch cost.** Inside a run, always pass `--telemetry <run>/telemetry.jsonl` and
+`--stage <scout|execute|...>`: the transport appends one line per invocation — op count, per-op
+milliseconds, wall clock, and how the batch ended. Telemetry is observability, never evidence;
+sealing and verification ignore it. The number that matters is invocations per run: a repeat-target
+express or replay run should need at most two. When a run costs more, read `telemetry.jsonl` before
+the next one and decide which splits were genuinely needed.
 
 **Wait for conditions, not durations.** Every op settles the document before returning — it waits
 until the DOM stops changing, bounded by a cap — so an ordinary page needs no explicit wait at all,
@@ -131,6 +139,48 @@ there. Copy them into the run directory at prepare, so the run carries the bytes
 
 At deliver, append what the next run would want to know. Promote a lesson to a repository playbook
 only after stripping every trace of the target; real identity never moves out of `.honololo/`.
+
+## Recipes and replay
+
+A recipe makes a repeat run a re-execution instead of a re-plan. It lives beside target memory —
+`.honololo/targets/<hostname>/recipes/<slug>.json` — so it is personal, local, and never tracked.
+
+Distill one at Deliver, from a run whose attempt passed in full:
+
+```text
+node harness/scripts/recipe.mjs --from-run <run-dir> --attempt <n> --slug <slug> [--force]
+```
+
+Extraction is deterministic and evidence-derived: it re-verifies the run, then reads each step's
+`actions.json` — the op list actually issued, recorded as that step's actions evidence. A run you
+intend to distill must therefore declare `actions` evidence on every step and record the issued ops
+as `actions.json`. Extraction refuses a run that did not verify, an attempt that did not pass, a
+step without an op-list actions file, and any op carrying a redacted or credential-shaped value — a
+secret never becomes replayable.
+
+To replay, take the ordinary stages, compressed:
+
+- **Intake**: the user names the recipe, or target memory points to it. Read it; the stored request
+  and plan are the run's shape. Confirm the goal still holds, in one line.
+- **Prepare**: pipe the recipe's stored `request` into `new-run.mjs --stdin` unchanged.
+- **Propose/Approve**: write `plan/proposal.md` from the recipe and approve against it. When every
+  step is `risk: low` and the target holds a matching standing grant, cite the grant and continue
+  without a round trip; otherwise approval is interactive as ever.
+- **Execute**: emit the recorded ops and pipe them straight into the transport, one batch:
+
+  ```text
+  node harness/scripts/recipe.mjs --emit <recipe-file> \
+    --evidence-dir <run>/attempts/001/evidence | node harness/scripts/browser.mjs ...
+  ```
+
+  When an op fails — a control moved, a page changed — fall back to ordinary adaptive execution for
+  that step and those after it. Navigation may adapt; criteria may not. A drifted recipe is
+  re-distilled from the run that just succeeded, never edited by hand.
+- **Seal, review, deliver** exactly as any run.
+
+On a standing-grant replay, never stop to ask. Anything unresolved is `needs_human` in the
+delivered result, not a mid-run question — the point of a replay is that the user can start it and
+walk away, and the host may run it in a background task and report on completion.
 
 ## Playbooks
 
@@ -431,4 +481,6 @@ Return the outcome, qualification, failure history, and portable path under
 `.honololo/runs/<run>/output/`. Missing evidence, unavailable fresh semantic review, contradictory
 history, or ambiguity remains `needs_human`. Keep every output link relative and inside `output/`.
 
-Then append to target memory what the next run would want to know, and index the run.
+Then append to target memory what the next run would want to know, and index the run. When the run
+is worth repeating, distill it into a recipe, and report the transport invocation count from
+`telemetry.jsonl` beside the outcome so the cost of the run stays visible.
