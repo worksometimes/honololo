@@ -15,7 +15,7 @@
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "playwright-core": "^1.62.1",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.5"
   },
   "license": "MIT"
 }
